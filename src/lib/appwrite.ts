@@ -45,11 +45,14 @@ export interface Project {
   description?: string;
   originalImageId?: string;
   processedImageId?: string;
+  outlineImageId?: string;
   pesFileId?: string;
   previewImageId?: string;
   hoopSize: '100x100' | '70x70';
   threadCount: number;
   colorMappings?: ColorMapping[];
+  extractedColors?: string[];
+  contourCount?: number;
   status: 'draft' | 'processing' | 'ready' | 'exported';
 }
 

@@ -14,8 +14,25 @@ interface ProcessImagePayload {
 interface ProcessImageResponse {
   success: boolean;
   processedImageId?: string;
+  outlineImageId?: string;
   extractedColors?: string[];
   colorCount?: number;
+  contourCount?: number;
+  regionData?: {
+    regions: Array<{
+      color: string;
+      type: 'fill' | 'outline' | 'detail';
+      area_mm2: number;
+      contour_count: number;
+    }>;
+    summary: {
+      total_regions: number;
+      fill_count: number;
+      outline_count: number;
+      detail_count: number;
+    };
+  };
+  pipeline?: string;
   error?: string;
 }
 
