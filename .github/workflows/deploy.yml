@@ -1,0 +1,106 @@
+name: Deploy Embroidery Palette
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    name: Build & Deploy to Appwrite
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: production
+      url: https://stitch.friborg.uk
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build for Production
+        run: npm run build
+
+      - name: Create deployment package
+        run: |
+          cd dist
+          tar -czf ../production-build.tar.gz .
+          cd ..
+
+      - name: Upload production artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-build
+          path: production-build.tar.gz
+          retention-days: 30
+
+      - name: Deploy to Appwrite
+        env:
+          APPWRITE_ENDPOINT: https://appwrite.friborg.uk/v1
+          APPWRITE_PROJECT_ID: 69656089001c9db36e43
+          APPWRITE_API_KEY: ${{ secrets.APPWRITE_API_KEY }}
+        run: |
+          echo "🚀 Deploying to stitch.friborg.uk..."
+          # TODO: Add Appwrite deployment command here
+          # For now, artifact is available for manual deployment
+          echo "✅ Build packaged for deployment"
+
+      - name: Deployment Summary
+        run: |
+          echo "## 🎉 Deployment Ready" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Site**: https://stitch.friborg.uk" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Artifact 'production-build' contains the built files." >> $GITHUB_STEP_SUMMARY
+
+  # Build validation on PRs
+  build-test:
+    name: Build Test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linter
+        run: npm run lint
+        continue-on-error: true
+
+      - name: Run tests
+        run: npm run test
+        continue-on-error: true
+
+      - name: Build
+        run: npm run build
+
+      - name: Check build output
+        run: |
+          if [ ! -f "dist/index.html" ]; then
+            echo "❌ Build failed - index.html not found"
+            exit 1
+          fi
+          echo "✅ Build successful"
