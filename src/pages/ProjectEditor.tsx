@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Logo } from '@/components/Logo';
@@ -10,6 +10,7 @@ import { processImage, generatePes, getPesDownloadUrl, getPreviewUrl } from '@/l
 import { BROTHER_THREADS, findClosestThread, type BrotherThread } from '@/lib/brotherThreads';
 import { ThreadPicker } from '@/components/ThreadPicker';
 import { useToast } from '@/hooks/use-toast';
+import { useSwipeGesture } from '@/hooks/useSwipeGesture';
 import { 
   ArrowLeft, 
   Image as ImageIcon,
@@ -40,6 +41,29 @@ export default function ProjectEditor() {
   const [selectedColorIndex, setSelectedColorIndex] = useState<number | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+
+  // Swipe gesture for tab navigation
+  const TABS = ['original', 'colors', 'preview'] as const;
+  
+  const handleSwipeLeft = useCallback(() => {
+    const currentIndex = TABS.indexOf(activeTab as typeof TABS[number]);
+    if (currentIndex < TABS.length - 1) {
+      setActiveTab(TABS[currentIndex + 1]);
+    }
+  }, [activeTab]);
+
+  const handleSwipeRight = useCallback(() => {
+    const currentIndex = TABS.indexOf(activeTab as typeof TABS[number]);
+    if (currentIndex > 0) {
+      setActiveTab(TABS[currentIndex - 1]);
+    }
+  }, [activeTab]);
+
+  const [swipeState, swipeHandlers] = useSwipeGesture({
+    threshold: 50,
+    onSwipeLeft: handleSwipeLeft,
+    onSwipeRight: handleSwipeRight,
+  });
 
   useEffect(() => {
     if (id) {
@@ -287,8 +311,11 @@ export default function ProjectEditor() {
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="container px-4 py-4">
+      {/* Main Content - Swipeable */}
+      <main 
+        className="container px-4 py-4"
+        {...swipeHandlers}
+      >
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="grid w-full grid-cols-3 mb-4">
