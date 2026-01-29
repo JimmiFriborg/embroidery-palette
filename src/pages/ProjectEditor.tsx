@@ -6,9 +6,10 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { databases, storage, DATABASE_ID, COLLECTIONS, STORAGE_BUCKETS, type Project, type ColorMapping } from '@/lib/appwrite';
-import { processImage, generatePes, getPesDownloadUrl, getPreviewUrl } from '@/lib/appwriteFunctions';
+import { processImage, generatePes, getPesDownloadUrl, getPreviewUrl, type StitchStats } from '@/lib/appwriteFunctions';
 import { BROTHER_THREADS, findClosestThread, type BrotherThread } from '@/lib/brotherThreads';
 import { ThreadPicker } from '@/components/ThreadPicker';
+import { ExportDialog, type QualityPreset } from '@/components/ExportDialog';
 import { useToast } from '@/hooks/use-toast';
 import { useSwipeGesture } from '@/hooks/useSwipeGesture';
 import { 
@@ -41,6 +42,8 @@ export default function ProjectEditor() {
   const [selectedColorIndex, setSelectedColorIndex] = useState<number | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [showExportDialog, setShowExportDialog] = useState(false);
+  const [lastStitchStats, setLastStitchStats] = useState<StitchStats | null>(null);
 
   // Swipe gesture for tab navigation
   const TABS = ['original', 'colors', 'preview'] as const;
@@ -218,9 +221,7 @@ export default function ProjectEditor() {
     setSelectedColorIndex(null);
   };
 
-  const handleExport = async () => {
-    if (!project) return;
-
+  const handleExportClick = () => {
     if (colorMappings.length === 0) {
       toast({
         title: 'No colors mapped',
@@ -229,11 +230,16 @@ export default function ProjectEditor() {
       });
       return;
     }
+    setShowExportDialog(true);
+  };
+
+  const handleExport = async (qualityPreset: QualityPreset, density?: number) => {
+    if (!project) return;
 
     setIsExporting(true);
     toast({
       title: 'Generating PES file...',
-      description: 'Creating embroidery pattern...',
+      description: `Using ${qualityPreset} quality preset...`,
     });
 
     try {
@@ -241,9 +247,16 @@ export default function ProjectEditor() {
         projectId: project.$id,
         colorMappings,
         hoopSize: project.hoopSize,
+        qualityPreset,
+        density,
       });
 
       if (result.success && result.pesFileId) {
+        // Store stats for display
+        if (result.stats) {
+          setLastStitchStats(result.stats);
+        }
+
         // Set download URL
         const downloadUrl = getPesDownloadUrl(result.pesFileId);
         setPesDownloadUrl(downloadUrl);
@@ -253,12 +266,18 @@ export default function ProjectEditor() {
           setPreviewImageUrl(getPreviewUrl(result.previewImageId));
         }
 
+        const stitchCount = result.stats?.stitch_count?.toLocaleString() || '';
+        const timeMinutes = result.stats?.estimated_time_minutes 
+          ? `~${Math.round(result.stats.estimated_time_minutes)} min`
+          : '';
+
         toast({
           title: 'PES file ready!',
-          description: 'Click Download to save your embroidery file.',
+          description: `${stitchCount} stitches${timeMinutes ? `, ${timeMinutes} sew time` : ''}`,
         });
 
-        // Open download in new tab
+        // Close dialog and open download
+        setShowExportDialog(false);
         window.open(downloadUrl, '_blank');
       } else {
         throw new Error(result.error || 'PES generation failed');
@@ -466,6 +485,22 @@ export default function ProjectEditor() {
                       <span className="text-muted-foreground">Thread Colors</span>
                       <p className="font-semibold">{colorMappings.length || project?.threadCount || '--'}</p>
                     </div>
+                    {lastStitchStats && (
+                      <>
+                        <div>
+                          <span className="text-muted-foreground">Stitch Count</span>
+                          <p className="font-semibold">{lastStitchStats.stitch_count?.toLocaleString() || '--'}</p>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Sew Time</span>
+                          <p className="font-semibold">
+                            {lastStitchStats.estimated_time_minutes 
+                              ? `~${Math.round(lastStitchStats.estimated_time_minutes)} min` 
+                              : '--'}
+                          </p>
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -498,23 +533,25 @@ export default function ProjectEditor() {
           </Button>
           <Button 
             className="flex-1 bg-gradient-warm"
-            onClick={handleExport}
+            onClick={handleExportClick}
             disabled={isExporting || colorMappings.length === 0}
           >
-            {isExporting ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Generating...
-              </>
-            ) : (
-              <>
-                <Download className="h-4 w-4 mr-2" />
-                Export .pes
-              </>
-            )}
+            <Download className="h-4 w-4 mr-2" />
+            Export .pes
           </Button>
         </div>
       </div>
+
+      {/* Export Dialog */}
+      <ExportDialog
+        isOpen={showExportDialog}
+        onClose={() => setShowExportDialog(false)}
+        onExport={handleExport}
+        hoopSize={project?.hoopSize || '100x100'}
+        colorCount={colorMappings.length}
+        isExporting={isExporting}
+        stats={lastStitchStats}
+      />
     </div>
   );
 }

@@ -28,6 +28,17 @@ interface GeneratePesPayload {
     threadColor: string;
   }>;
   hoopSize: '100x100' | '70x70';
+  qualityPreset?: 'fast' | 'balanced' | 'quality';
+  density?: number;
+}
+
+export interface StitchStats {
+  stitch_count: number;
+  estimated_time_minutes: number;
+  color_count: number;
+  region_count?: number;
+  quality_preset?: string;
+  warning?: string | null;
 }
 
 interface GeneratePesResponse {
@@ -35,6 +46,8 @@ interface GeneratePesResponse {
   pesFileId?: string;
   previewImageId?: string;
   downloadUrl?: string;
+  stats?: StitchStats;
+  pipeline?: string;
   error?: string;
 }
 
