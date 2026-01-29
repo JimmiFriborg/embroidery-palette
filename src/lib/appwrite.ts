@@ -22,8 +22,8 @@ export const storage = new Storage(client);
 // Export utilities
 export { ID, Query };
 
-// Database and collection IDs - to be configured in Appwrite console
-export const DATABASE_ID = 'stitchflow';
+// Database and collection IDs - configured in Appwrite console
+export const DATABASE_ID = 'newstitchdb';
 export const COLLECTIONS = {
   PROJECTS: 'projects',
   USER_PREFERENCES: 'user_preferences',
