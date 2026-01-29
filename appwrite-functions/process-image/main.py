@@ -77,16 +77,23 @@ def main(context):
         image = Image.open(io.BytesIO(file_data))
         image_np = np.array(image.convert('RGB'))
         
-        # Process image
-        context.log(f'Processing with {thread_count} colors...')
+        # Process image with embroidery-friendly pipeline
+        context.log(f'Processing with {thread_count} colors for PP1...')
         
-        # Step 1: Remove background (simplified approach)
+        # Step 1: Remove background (GrabCut for cleaner results)
+        context.log('Removing background...')
         processed_np = remove_background_simple(image_np)
         
-        # Step 2: Quantize colors
+        # Step 2: Extract clean outlines (Canny + contour simplification)
+        context.log('Extracting embroidery-friendly outlines...')
+        outline_image, contours = extract_clean_outlines(processed_np)
+        
+        # Step 3: Quantize colors (fewer = better for PP1 hobbyist use)
+        context.log(f'Quantizing to {thread_count} colors...')
         quantized_np, colors = quantize_colors(processed_np, thread_count)
         
-        # Step 3: Resize for hoop
+        # Step 4: Resize for hoop with safe area (90x90 for 100mm, 62x62 for 70mm)
+        context.log(f'Sizing for {hoop_size} hoop with safe margins...')
         final_np = resize_for_hoop(quantized_np, hoop_size)
         
         # Save processed image
@@ -103,27 +110,48 @@ def main(context):
             file=InputFile.from_bytes(buffer.read(), f'{project_id}_processed.png')
         )
         
+        # Upload outline image if generated
+        outline_file_id = None
+        if outline_image is not None:
+            outline_pil = Image.fromarray(outline_image)
+            outline_buffer = io.BytesIO()
+            outline_pil.save(outline_buffer, format='PNG')
+            outline_buffer.seek(0)
+            outline_file = storage.create_file(
+                bucket_id='project_images',
+                file_id='unique()',
+                file=InputFile.from_bytes(outline_buffer.read(), f'{project_id}_outlines.png')
+            )
+            outline_file_id = outline_file['$id']
+        
         # Convert colors to hex
         color_hex_list = [rgb_to_hex(c) for c in colors]
         
-        # Update project document
+        # Update project document with outline data
         context.log('Updating project...')
+        update_data = {
+            'processedImageId': processed_file['$id'],
+            'status': 'ready',
+            'extractedColors': color_hex_list
+        }
+        if outline_file_id:
+            update_data['outlineImageId'] = outline_file_id
+            update_data['contourCount'] = len(contours)
+        
         databases.update_document(
             database_id='newstitchdb',
             collection_id='projects',
             document_id=project_id,
-            data={
-                'processedImageId': processed_file['$id'],
-                'status': 'ready',
-                'extractedColors': color_hex_list
-            }
+            data=update_data
         )
         
         return context.res.json({
             'success': True,
             'processedImageId': processed_file['$id'],
+            'outlineImageId': outline_file_id,
             'extractedColors': color_hex_list,
-            'colorCount': len(colors)
+            'colorCount': len(colors),
+            'contourCount': len(contours) if contours else 0
         })
         
     except Exception as e:
@@ -136,42 +164,121 @@ def main(context):
 
 def remove_background_simple(image_np):
     """
-    Simple background removal using edge detection and thresholding.
-    For better results, use GrabCut or a deep learning model.
+    Background removal using GrabCut for cleaner segmentation.
+    Falls back to edge-based detection if GrabCut fails.
     """
     if cv2 is None:
-        # Fallback: return image as-is if OpenCV not available
         return image_np
+    
+    h, w = image_np.shape[:2]
+    
+    # Try GrabCut first (better results for hobby embroidery)
+    try:
+        mask = np.zeros((h, w), np.uint8)
+        bgd_model = np.zeros((1, 65), np.float64)
+        fgd_model = np.zeros((1, 65), np.float64)
+        
+        # Rectangle covering center 80% of image
+        margin_x, margin_y = int(w * 0.1), int(h * 0.1)
+        rect = (margin_x, margin_y, w - 2 * margin_x, h - 2 * margin_y)
+        
+        cv2.grabCut(image_np, mask, rect, bgd_model, fgd_model, 5, cv2.GC_INIT_WITH_RECT)
+        
+        # Create binary mask (foreground + probable foreground)
+        mask2 = np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8')
+        result = image_np.copy()
+        result[mask2 == 0] = [255, 255, 255]
+        return result
+        
+    except Exception:
+        # Fallback to simple edge-based detection
+        gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        edges = cv2.Canny(blurred, 50, 150)
+        
+        kernel = np.ones((3, 3), np.uint8)
+        dilated = cv2.dilate(edges, kernel, iterations=2)
+        contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if not contours:
+            return image_np
+        
+        mask = np.zeros(gray.shape, dtype=np.uint8)
+        largest_contour = max(contours, key=cv2.contourArea)
+        cv2.drawContours(mask, [largest_contour], -1, 255, -1)
+        
+        result = image_np.copy()
+        result[mask == 0] = [255, 255, 255]
+        return result
+
+
+def extract_clean_outlines(image_np, simplify_epsilon=2.0):
+    """
+    Extract clean, embroidery-friendly outlines using Canny + contour simplification.
+    
+    For PP1 hobby machine:
+    - Fewer points = cleaner stitches
+    - Smooth curves = less thread breaks
+    - Structural outlines, not literal pixel boundaries
+    """
+    if cv2 is None:
+        return None, []
+    
+    h, w = image_np.shape[:2]
     
     # Convert to grayscale
     gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
     
-    # Apply Gaussian blur
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    # Bilateral filter: preserves edges while removing noise (critical for embroidery)
+    filtered = cv2.bilateralFilter(gray, 9, 75, 75)
     
-    # Edge detection
-    edges = cv2.Canny(blurred, 50, 150)
+    # Adaptive Canny thresholds based on image
+    median_val = np.median(filtered)
+    lower = int(max(0, 0.66 * median_val))
+    upper = int(min(255, 1.33 * median_val))
     
-    # Dilate edges to close gaps
+    # Canny edge detection with tuned thresholds
+    edges = cv2.Canny(filtered, lower, upper)
+    
+    # Morphological closing to connect nearby edges
     kernel = np.ones((3, 3), np.uint8)
-    dilated = cv2.dilate(edges, kernel, iterations=2)
+    edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
     
     # Find contours
-    contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, hierarchy = cv2.findContours(edges, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     
     if not contours:
-        return image_np
+        return None, []
     
-    # Create mask from largest contour
-    mask = np.zeros(gray.shape, dtype=np.uint8)
-    largest_contour = max(contours, key=cv2.contourArea)
-    cv2.drawContours(mask, [largest_contour], -1, 255, -1)
+    # Filter and simplify contours for embroidery
+    min_contour_length = min(h, w) * 0.05  # Ignore tiny contours
+    simplified_contours = []
     
-    # Apply mask - set background to white
-    result = image_np.copy()
-    result[mask == 0] = [255, 255, 255]
+    for contour in contours:
+        # Filter by arc length (perimeter)
+        arc_length = cv2.arcLength(contour, True)
+        if arc_length < min_contour_length:
+            continue
+        
+        # Filter by area (ignore very small enclosed regions)
+        area = cv2.contourArea(contour)
+        if area < (min_contour_length ** 2) * 0.1:
+            continue
+        
+        # Ramer-Douglas-Peucker simplification
+        # Higher epsilon = fewer points = cleaner embroidery
+        epsilon = simplify_epsilon * 0.01 * arc_length
+        simplified = cv2.approxPolyDP(contour, epsilon, True)
+        
+        # Only keep if simplification retained meaningful shape
+        if len(simplified) >= 4:
+            simplified_contours.append(simplified)
     
-    return result
+    # Create outline image
+    outline_image = np.ones((h, w, 3), dtype=np.uint8) * 255
+    cv2.drawContours(outline_image, simplified_contours, -1, (0, 0, 0), 2)
+    
+    return outline_image, simplified_contours
 
 
 def quantize_colors(image_np, n_colors):
@@ -221,23 +328,36 @@ def quantize_colors_pil(image_np, n_colors):
 
 def resize_for_hoop(image_np, hoop_size):
     """
-    Resize image to fit within hoop dimensions.
-    Maintains aspect ratio, adds padding if needed.
+    Resize image to fit within hoop SAFE AREA.
+    
+    PP1 safe areas (leaving margin for hoop flex and registration):
+    - 100x100mm hoop → 90x90mm safe area (900x900 px at 10px/mm)
+    - 70x70mm hoop → 62x62mm safe area (620x620 px at 10px/mm)
+    
+    This prevents edge distortion and registration errors common with
+    auto-digitized content on hobby machines.
     """
-    # Hoop sizes in mm, convert to pixels at 10 pixels/mm for embroidery
-    sizes = {
-        '100x100': (1000, 1000),  # 100mm at 10px/mm
-        '70x70': (700, 700)       # 70mm at 10px/mm
+    # Safe areas in pixels (10 px/mm for embroidery resolution)
+    safe_areas = {
+        '100x100': (900, 900),   # 90mm safe zone
+        '70x70': (620, 620)      # 62mm safe zone
     }
     
-    target_size = sizes.get(hoop_size, (1000, 1000))
+    # Full hoop size for canvas
+    full_sizes = {
+        '100x100': (1000, 1000),
+        '70x70': (700, 700)
+    }
+    
+    safe_size = safe_areas.get(hoop_size, (900, 900))
+    full_size = full_sizes.get(hoop_size, (1000, 1000))
     
     image = Image.fromarray(image_np)
-    image.thumbnail(target_size, Image.Resampling.LANCZOS)
+    image.thumbnail(safe_size, Image.Resampling.LANCZOS)
     
-    # Create white canvas and center image
-    canvas = Image.new('RGB', target_size, (255, 255, 255))
-    offset = ((target_size[0] - image.width) // 2, (target_size[1] - image.height) // 2)
+    # Create white canvas at full hoop size and center image
+    canvas = Image.new('RGB', full_size, (255, 255, 255))
+    offset = ((full_size[0] - image.width) // 2, (full_size[1] - image.height) // 2)
     canvas.paste(image, offset)
     
     return np.array(canvas)
