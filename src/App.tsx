@@ -8,6 +8,9 @@ import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import Dashboard from "./pages/Dashboard";
+import NewProject from "./pages/NewProject";
+import ProjectEditor from "./pages/ProjectEditor";
+import Projects from "./pages/Projects";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -67,6 +70,30 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <Dashboard />
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/new-project" 
+        element={
+          <ProtectedRoute>
+            <NewProject />
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/project/:id" 
+        element={
+          <ProtectedRoute>
+            <ProjectEditor />
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/projects" 
+        element={
+          <ProtectedRoute>
+            <Projects />
           </ProtectedRoute>
         } 
       />
