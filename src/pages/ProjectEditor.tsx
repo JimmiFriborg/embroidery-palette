@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { databases, storage, DATABASE_ID, COLLECTIONS, STORAGE_BUCKETS, type Project, type ColorMapping } from '@/lib/appwrite';
+import { processImage, generatePes, getPesDownloadUrl, getPreviewUrl } from '@/lib/appwriteFunctions';
 import { BROTHER_THREADS, findClosestThread, type BrotherThread } from '@/lib/brotherThreads';
 import { ThreadPicker } from '@/components/ThreadPicker';
 import { useToast } from '@/hooks/use-toast';
@@ -18,7 +19,8 @@ import {
   Loader2,
   Settings,
   Sparkles,
-  Play
+  Play,
+  ExternalLink
 } from 'lucide-react';
 
 export default function ProjectEditor() {
@@ -32,9 +34,12 @@ export default function ProjectEditor() {
   const [activeTab, setActiveTab] = useState('original');
   const [originalImageUrl, setOriginalImageUrl] = useState<string | null>(null);
   const [processedImageUrl, setProcessedImageUrl] = useState<string | null>(null);
+  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
+  const [pesDownloadUrl, setPesDownloadUrl] = useState<string | null>(null);
   const [colorMappings, setColorMappings] = useState<ColorMapping[]>([]);
   const [selectedColorIndex, setSelectedColorIndex] = useState<number | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -112,23 +117,67 @@ export default function ProjectEditor() {
   };
 
   const handleProcessImage = async () => {
-    if (!project) return;
+    if (!project || !project.originalImageId) {
+      toast({
+        title: 'No image',
+        description: 'Please upload an image first.',
+        variant: 'destructive',
+      });
+      return;
+    }
     
     setIsProcessing(true);
     toast({
       title: 'Processing image...',
-      description: 'This may take a moment. The Appwrite function will handle color quantization.',
+      description: 'Removing background and quantizing colors...',
     });
 
-    // TODO: Call Appwrite function for image processing
-    // For now, simulate processing delay
-    setTimeout(() => {
-      setIsProcessing(false);
-      toast({
-        title: 'Processing complete!',
-        description: 'Note: Full processing requires Appwrite function setup.',
+    try {
+      const result = await processImage({
+        projectId: project.$id,
+        imageId: project.originalImageId,
+        threadCount: project.threadCount,
+        hoopSize: project.hoopSize,
       });
-    }, 2000);
+
+      if (result.success && result.processedImageId) {
+        // Update local state
+        const fileUrl = storage.getFilePreview(STORAGE_BUCKETS.IMAGES, result.processedImageId);
+        setProcessedImageUrl(fileUrl.toString());
+        
+        // Generate color mappings from extracted colors
+        if (result.extractedColors) {
+          const mappings = result.extractedColors.map(color => {
+            const closestThread = findClosestThread(color);
+            return {
+              originalColor: color,
+              threadNumber: closestThread.number,
+              threadName: closestThread.name,
+              threadColor: closestThread.hex,
+            };
+          });
+          setColorMappings(mappings);
+        }
+
+        toast({
+          title: 'Processing complete!',
+          description: `Extracted ${result.colorCount} colors.`,
+        });
+        
+        setActiveTab('colors');
+      } else {
+        throw new Error(result.error || 'Processing failed');
+      }
+    } catch (error) {
+      console.error('Processing error:', error);
+      toast({
+        title: 'Processing failed',
+        description: error instanceof Error ? error.message : 'Check Appwrite function setup.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleThreadSelect = (thread: BrotherThread) => {
@@ -145,11 +194,61 @@ export default function ProjectEditor() {
     setSelectedColorIndex(null);
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
+    if (!project) return;
+
+    if (colorMappings.length === 0) {
+      toast({
+        title: 'No colors mapped',
+        description: 'Please process the image and map thread colors first.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsExporting(true);
     toast({
-      title: 'Export coming soon!',
-      description: 'PES file generation requires the pyembroidery Appwrite function.',
+      title: 'Generating PES file...',
+      description: 'Creating embroidery pattern...',
     });
+
+    try {
+      const result = await generatePes({
+        projectId: project.$id,
+        colorMappings,
+        hoopSize: project.hoopSize,
+      });
+
+      if (result.success && result.pesFileId) {
+        // Set download URL
+        const downloadUrl = getPesDownloadUrl(result.pesFileId);
+        setPesDownloadUrl(downloadUrl);
+
+        // Set preview if available
+        if (result.previewImageId) {
+          setPreviewImageUrl(getPreviewUrl(result.previewImageId));
+        }
+
+        toast({
+          title: 'PES file ready!',
+          description: 'Click Download to save your embroidery file.',
+        });
+
+        // Open download in new tab
+        window.open(downloadUrl, '_blank');
+      } else {
+        throw new Error(result.error || 'PES generation failed');
+      }
+    } catch (error) {
+      console.error('Export error:', error);
+      toast({
+        title: 'Export failed',
+        description: error instanceof Error ? error.message : 'Check Appwrite function setup.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   if (isLoading) {
@@ -307,27 +406,52 @@ export default function ProjectEditor() {
           <TabsContent value="preview" className="mt-0">
             <Card className="border-0 shadow-soft">
               <CardContent className="p-4">
-                <div className="aspect-square flex flex-col items-center justify-center bg-muted rounded-lg border-2 border-dashed border-muted-foreground/25">
-                  <Eye className="h-12 w-12 text-muted-foreground mb-2" />
-                  <p className="text-sm text-muted-foreground font-medium">Stitch Preview</p>
-                  <p className="text-xs text-muted-foreground mt-1 text-center px-4">
-                    Preview will appear here after processing with pyembroidery
-                  </p>
-                </div>
+                {previewImageUrl ? (
+                  <img
+                    src={previewImageUrl}
+                    alt="Stitch Preview"
+                    className="w-full max-h-[50vh] object-contain rounded-lg bg-white"
+                  />
+                ) : processedImageUrl ? (
+                  <img
+                    src={processedImageUrl}
+                    alt="Processed Preview"
+                    className="w-full max-h-[50vh] object-contain rounded-lg bg-white"
+                  />
+                ) : (
+                  <div className="aspect-square flex flex-col items-center justify-center bg-muted rounded-lg border-2 border-dashed border-muted-foreground/25">
+                    <Eye className="h-12 w-12 text-muted-foreground mb-2" />
+                    <p className="text-sm text-muted-foreground font-medium">Stitch Preview</p>
+                    <p className="text-xs text-muted-foreground mt-1 text-center px-4">
+                      Process your image first to see the preview
+                    </p>
+                  </div>
+                )}
 
                 {/* Stitch Info */}
                 <div className="mt-4 p-3 rounded-lg bg-secondary/50">
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div>
-                      <span className="text-muted-foreground">Estimated Stitches</span>
-                      <p className="font-semibold">--</p>
+                      <span className="text-muted-foreground">Hoop Size</span>
+                      <p className="font-semibold">{project?.hoopSize === '100x100' ? '100×100mm' : '70×70mm'}</p>
                     </div>
                     <div>
-                      <span className="text-muted-foreground">Estimated Time</span>
-                      <p className="font-semibold">--</p>
+                      <span className="text-muted-foreground">Thread Colors</span>
+                      <p className="font-semibold">{colorMappings.length || project?.threadCount || '--'}</p>
                     </div>
                   </div>
                 </div>
+
+                {/* Download button if PES is ready */}
+                {pesDownloadUrl && (
+                  <Button
+                    className="mt-4 w-full bg-gradient-warm"
+                    onClick={() => window.open(pesDownloadUrl, '_blank')}
+                  >
+                    <ExternalLink className="h-4 w-4 mr-2" />
+                    Download PES File
+                  </Button>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -348,9 +472,19 @@ export default function ProjectEditor() {
           <Button 
             className="flex-1 bg-gradient-warm"
             onClick={handleExport}
+            disabled={isExporting || colorMappings.length === 0}
           >
-            <Download className="h-4 w-4 mr-2" />
-            Export .pes
+            {isExporting ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Generating...
+              </>
+            ) : (
+              <>
+                <Download className="h-4 w-4 mr-2" />
+                Export .pes
+              </>
+            )}
           </Button>
         </div>
       </div>
