@@ -1,6 +1,6 @@
 """
-Appwrite Python Function: PES File Generation
-Generates Brother PES embroidery files using pyembroidery.
+Appwrite Python Function: PES File Generation (Phase 2 Pipeline)
+Generates Brother PES embroidery files using the proper digitizing pipeline.
 
 Deploy to Appwrite with:
   appwrite functions create --functionId generate-pes --name "Generate PES" --runtime python-3.11
@@ -15,6 +15,7 @@ Required environment variables in Appwrite:
 import os
 import io
 import json
+import sys
 import numpy as np
 from PIL import Image
 from appwrite.client import Client
@@ -22,14 +23,33 @@ from appwrite.services.storage import Storage
 from appwrite.services.databases import Databases
 from appwrite.input_file import InputFile
 
+# Add lib directory to path for Phase 2 modules
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'lib'))
+
+# Import Phase 2 pipeline modules
+try:
+    from shape_analyzer import extract_regions
+    from stitch_planner import plan_stitches, QualityPreset
+    from stitch_generator import generate_stitches
+    PHASE2_AVAILABLE = True
+except ImportError as e:
+    PHASE2_AVAILABLE = False
+    PHASE2_ERROR = str(e)
+
 # pyembroidery for PES generation
 try:
     import pyembroidery
 except ImportError:
     pyembroidery = None
 
+# OpenCV for image processing
+try:
+    import cv2
+except ImportError:
+    cv2 = None
 
-# Brother thread database (subset - add more as needed)
+
+# Brother thread database
 BROTHER_THREADS = {
     '#FFFFFF': ('001', 'White'),
     '#000000': ('900', 'Black'),
@@ -59,7 +79,9 @@ def main(context):
         "colorMappings": [
             {"originalColor": "#FF0000", "threadNumber": "202", "threadName": "Red", "threadColor": "#FF0000"}
         ],
-        "hoopSize": "100x100"
+        "hoopSize": "100x100",
+        "qualityPreset": "balanced",  // "fast", "balanced", "quality"
+        "density": 5.0  // Optional override (stitches/mm)
     }
     """
     if pyembroidery is None:
@@ -75,12 +97,19 @@ def main(context):
         project_id = payload.get('projectId')
         color_mappings = payload.get('colorMappings', [])
         hoop_size = payload.get('hoopSize', '100x100')
+        quality_preset = payload.get('qualityPreset', 'balanced')
+        density_override = payload.get('density')
         
         if not project_id:
             return context.res.json({
                 'success': False,
                 'error': 'Missing projectId'
             }, 400)
+        
+        # Check Phase 2 availability
+        if not PHASE2_AVAILABLE:
+            context.log(f'Phase 2 modules not available: {PHASE2_ERROR}')
+            context.log('Falling back to legacy PES generation...')
         
         # Initialize Appwrite client
         client = Client()
@@ -116,19 +145,35 @@ def main(context):
         image = Image.open(io.BytesIO(file_data)).convert('RGB')
         image_np = np.array(image)
         
-        # Generate PES file
-        context.log('Generating PES file...')
-        pes_data = generate_pes(image_np, color_mappings, hoop_size, context)
+        context.log(f'Image loaded: {image_np.shape[1]}x{image_np.shape[0]} px')
+        
+        # Generate PES using appropriate pipeline
+        if PHASE2_AVAILABLE:
+            result = generate_pes_phase2(
+                context, image_np, color_mappings, hoop_size,
+                quality_preset, density_override, project.get('name', 'Design')
+            )
+        else:
+            result = generate_pes_legacy(
+                context, image_np, color_mappings, hoop_size,
+                project.get('name', 'Design')
+            )
+        
+        if not result['success']:
+            return context.res.json(result, 500)
+        
+        pes_data = result['pes_data']
+        stats = result.get('stats', {})
         
         # Upload PES file
         context.log('Uploading PES file...')
         pes_file = storage.create_file(
             bucket_id='pes_files',
             file_id='unique()',
-            file=InputFile.from_bytes(pes_data, f'{project["name"]}.pes')
+            file=InputFile.from_bytes(pes_data, f'{project.get("name", "design")}.pes')
         )
         
-        # Generate stitch preview image
+        # Generate stitch preview
         context.log('Generating preview...')
         preview_data = generate_preview(pes_data)
         
@@ -155,32 +200,119 @@ def main(context):
             data=update_data
         )
         
-        # Get download URL
-        download_url = storage.get_file_download(
-            bucket_id='pes_files',
-            file_id=pes_file['$id']
-        )
+        context.log('=== PES Generation Complete ===')
         
         return context.res.json({
             'success': True,
             'pesFileId': pes_file['$id'],
             'previewImageId': preview_file['$id'] if preview_file else None,
-            'downloadUrl': str(download_url)
+            'stats': stats,
+            'pipeline': 'phase2' if PHASE2_AVAILABLE else 'legacy'
         })
         
     except Exception as e:
         context.error(f'PES generation error: {str(e)}')
+        import traceback
+        context.error(traceback.format_exc())
         return context.res.json({
             'success': False,
             'error': str(e)
         }, 500)
 
 
-def generate_pes(image_np, color_mappings, hoop_size, context):
+def generate_pes_phase2(context, image_np, color_mappings, hoop_size, quality_preset, density_override, design_name):
     """
-    Generate PES embroidery file from processed image.
-    Uses fill stitch pattern for each color region.
+    Generate PES using Phase 2 digitizing pipeline.
+    
+    Pipeline stages:
+    1. Extract regions from quantized image
+    2. Plan stitches (type, angle, density per region)
+    3. Generate actual stitch coordinates
+    4. Export to PES format
     """
+    context.log('=== Using Phase 2 PES Generation ===')
+    
+    # Map quality preset
+    preset_map = {
+        'fast': QualityPreset.FAST,
+        'balanced': QualityPreset.BALANCED,
+        'quality': QualityPreset.QUALITY
+    }
+    preset = preset_map.get(quality_preset, QualityPreset.BALANCED)
+    
+    context.log(f'Quality preset: {quality_preset}')
+    
+    # Stage 1: Extract regions
+    context.log('Stage 1: Extracting regions...')
+    n_colors = len(color_mappings) if color_mappings else 6
+    regions, quantized_image, color_palette = extract_regions(
+        image_np,
+        n_colors=n_colors,
+        min_area_mm2=2.0
+    )
+    
+    context.log(f'  Found {len(regions)} regions')
+    
+    # Stage 2: Plan stitches
+    context.log('Stage 2: Planning stitches...')
+    stitch_plan = plan_stitches(
+        regions,
+        hoop_size=hoop_size,
+        quality_preset=preset,
+        density_override=density_override
+    )
+    
+    context.log(f'  Estimated stitches: {stitch_plan.total_stitch_estimate:,}')
+    context.log(f'  Estimated time: {stitch_plan.estimated_time_minutes:.1f} minutes')
+    
+    # Check stitch count warning
+    if stitch_plan.total_stitch_estimate > 15000:
+        context.log(f'  ⚠️ WARNING: High stitch count ({stitch_plan.total_stitch_estimate:,}) may strain PP1')
+    
+    # Stage 3: Generate stitches
+    context.log('Stage 3: Generating stitch coordinates...')
+    
+    # Build color mapping lookup
+    color_to_thread = {}
+    for mapping in color_mappings:
+        color_to_thread[mapping['originalColor'].upper()] = mapping
+    
+    pattern = generate_stitches(stitch_plan, color_to_thread)
+    
+    # Set metadata
+    pattern.extras['name'] = design_name
+    pattern.extras['author'] = 'StitchFlow Phase 2'
+    
+    # Stage 4: Export to PES
+    context.log('Stage 4: Exporting to PES format...')
+    output = io.BytesIO()
+    pyembroidery.write_pes(pattern, output)
+    output.seek(0)
+    pes_data = output.read()
+    
+    # Calculate actual stats
+    actual_stitch_count = len(pattern.stitches)
+    
+    return {
+        'success': True,
+        'pes_data': pes_data,
+        'stats': {
+            'stitch_count': actual_stitch_count,
+            'estimated_time_minutes': stitch_plan.estimated_time_minutes,
+            'color_count': len(stitch_plan.layers),
+            'region_count': len(regions),
+            'quality_preset': quality_preset,
+            'warning': 'High stitch count' if actual_stitch_count > 15000 else None
+        }
+    }
+
+
+def generate_pes_legacy(context, image_np, color_mappings, hoop_size, design_name):
+    """
+    Legacy PES generation when Phase 2 modules aren't available.
+    """
+    context.log('Using legacy PES generation...')
+    
     # Hoop dimensions in mm
     hoop_dims = {
         '100x100': (100, 100),
@@ -190,10 +322,8 @@ def generate_pes(image_np, color_mappings, hoop_size, context):
     
     # Create embroidery pattern
     pattern = pyembroidery.EmbPattern()
-    
-    # Set metadata
-    pattern.extras['name'] = 'StitchFlow Design'
-    pattern.extras['author'] = 'StitchFlow App'
+    pattern.extras['name'] = design_name
+    pattern.extras['author'] = 'StitchFlow Legacy'
     
     # Get unique colors from image
     height, width = image_np.shape[:2]
@@ -209,6 +339,8 @@ def generate_pes(image_np, color_mappings, hoop_size, context):
     # Scale factor: pixels to embroidery units (10 units = 1mm in PES)
     scale_x = (hoop_mm[0] * 10) / width
     scale_y = (hoop_mm[1] * 10) / height
+    
+    total_stitches = 0
     
     # Process each color
     for color_rgb in unique_colors:
@@ -235,8 +367,9 @@ def generate_pes(image_np, color_mappings, hoop_size, context):
         # Find all pixels of this color
         mask = np.all(image_np == color_rgb, axis=2)
         
-        # Generate fill stitches for this color region
-        generate_fill_stitches(pattern, mask, scale_x, scale_y, context)
+        # Generate fill stitches
+        stitches_added = generate_fill_stitches_legacy(pattern, mask, scale_x, scale_y)
+        total_stitches += stitches_added
         
         # Color change
         pattern.color_change()
@@ -249,7 +382,16 @@ def generate_pes(image_np, color_mappings, hoop_size, context):
     pyembroidery.write_pes(pattern, output)
     output.seek(0)
     
-    return output.read()
+    return {
+        'success': True,
+        'pes_data': output.read(),
+        'stats': {
+            'stitch_count': total_stitches,
+            'estimated_time_minutes': total_stitches / 400,  # Rough estimate
+            'color_count': len(unique_colors) - 1,  # Exclude white
+            'quality_preset': 'legacy'
+        }
+    }
 
 
 def get_unique_colors(image_np):
@@ -259,31 +401,25 @@ def get_unique_colors(image_np):
     return [tuple(c) for c in unique]
 
 
-def generate_fill_stitches(pattern, mask, scale_x, scale_y, context):
-    """
-    Generate fill stitches for a masked region.
-    Uses horizontal line fill pattern.
-    """
-    # Find bounding box of masked region
+def generate_fill_stitches_legacy(pattern, mask, scale_x, scale_y):
+    """Generate fill stitches for a masked region (legacy method)."""
     rows = np.any(mask, axis=1)
     cols = np.any(mask, axis=0)
     
     if not np.any(rows) or not np.any(cols):
-        return
+        return 0
     
     row_min, row_max = np.where(rows)[0][[0, -1]]
     col_min, col_max = np.where(cols)[0][[0, -1]]
     
-    # Stitch spacing (in pixels, adjust for density)
-    stitch_spacing = 3  # Every 3 pixels vertically
-    max_stitch_length = 40  # Max stitch length in pixels
+    stitch_spacing = 3
+    max_stitch_length = 40
     
-    # Generate horizontal fill lines
-    direction = 1  # Alternate direction
+    direction = 1
     first_stitch = True
+    stitch_count = 0
     
     for y in range(row_min, row_max + 1, stitch_spacing):
-        # Find x extents for this row
         row_mask = mask[y, :]
         if not np.any(row_mask):
             continue
@@ -291,14 +427,12 @@ def generate_fill_stitches(pattern, mask, scale_x, scale_y, context):
         x_positions = np.where(row_mask)[0]
         x_start, x_end = x_positions[0], x_positions[-1]
         
-        # Generate stitches along this line
         if direction == 1:
             x_range = range(x_start, x_end + 1, max_stitch_length)
         else:
             x_range = range(x_end, x_start - 1, -max_stitch_length)
         
         for x in x_range:
-            # Convert to embroidery coordinates (centered)
             ex = int((x - mask.shape[1] / 2) * scale_x)
             ey = int((y - mask.shape[0] / 2) * scale_y)
             
@@ -307,23 +441,20 @@ def generate_fill_stitches(pattern, mask, scale_x, scale_y, context):
                 first_stitch = False
             else:
                 pattern.add_stitch_absolute(pyembroidery.STITCH, ex, ey)
+                stitch_count += 1
         
-        direction *= -1  # Alternate direction
+        direction *= -1
+    
+    return stitch_count
 
 
 def generate_preview(pes_data):
-    """
-    Generate a PNG preview of the embroidery pattern.
-    """
+    """Generate a PNG preview of the embroidery pattern."""
     try:
-        # Load PES data
         pattern = pyembroidery.read_pes(io.BytesIO(pes_data))
-        
-        # Render to image
         output = io.BytesIO()
         pyembroidery.write_png(pattern, output)
         output.seek(0)
-        
         return output.read()
     except Exception as e:
         print(f'Preview generation failed: {e}')
