@@ -1,0 +1,7 @@
+# Appwrite Function: generate-pes
+# Install these dependencies
+
+appwrite>=4.0.0
+numpy>=1.24.0
+Pillow>=10.0.0
+pyembroidery>=1.4.36
