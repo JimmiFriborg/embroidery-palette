@@ -40,6 +40,10 @@
     --destructive: 0 65% 55%;
     --destructive-foreground: 36 30% 98%;
 
+    /* Warning - amber tone */
+    --warning: 38 92% 50%;
+    --warning-foreground: 25 30% 15%;
+
     --border: 25 20% 85%;
     --input: 25 20% 88%;
     --ring: 16 65% 55%;
@@ -101,6 +105,9 @@
 
     --destructive: 0 55% 45%;
     --destructive-foreground: 36 30% 92%;
+
+    --warning: 38 85% 45%;
+    --warning-foreground: 36 30% 92%;
 
     --border: 25 15% 25%;
     --input: 25 15% 22%;
