@@ -22,7 +22,9 @@ import {
   Settings,
   Sparkles,
   Play,
-  ExternalLink
+  ExternalLink,
+  Layers,
+  PenTool
 } from 'lucide-react';
 
 export default function ProjectEditor() {
@@ -36,6 +38,7 @@ export default function ProjectEditor() {
   const [activeTab, setActiveTab] = useState('original');
   const [originalImageUrl, setOriginalImageUrl] = useState<string | null>(null);
   const [processedImageUrl, setProcessedImageUrl] = useState<string | null>(null);
+  const [outlineImageUrl, setOutlineImageUrl] = useState<string | null>(null);
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
   const [pesDownloadUrl, setPesDownloadUrl] = useState<string | null>(null);
   const [colorMappings, setColorMappings] = useState<ColorMapping[]>([]);
@@ -44,6 +47,7 @@ export default function ProjectEditor() {
   const [isExporting, setIsExporting] = useState(false);
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [lastStitchStats, setLastStitchStats] = useState<StitchStats | null>(null);
+  const [showOutlineView, setShowOutlineView] = useState(false);
 
   // Swipe gesture for tab navigation
   const TABS = ['original', 'colors', 'preview'] as const;
@@ -100,6 +104,16 @@ export default function ProjectEditor() {
           setProcessedImageUrl(fileUrl.toString());
         } catch (e) {
           console.log('Could not load processed image');
+        }
+      }
+
+      // Load outline image if available
+      if (projectData.outlineImageId) {
+        try {
+          const fileUrl = storage.getFilePreview(STORAGE_BUCKETS.IMAGES, projectData.outlineImageId);
+          setOutlineImageUrl(fileUrl.toString());
+        } catch (e) {
+          console.log('Could not load outline image');
         }
       }
 
@@ -168,9 +182,15 @@ export default function ProjectEditor() {
       });
 
       if (result.success && result.processedImageId) {
-        // Update local state
+        // Update local state - processed image
         const fileUrl = storage.getFilePreview(STORAGE_BUCKETS.IMAGES, result.processedImageId);
         setProcessedImageUrl(fileUrl.toString());
+        
+        // Load outline image if available
+        if (result.outlineImageId) {
+          const outlineUrl = storage.getFilePreview(STORAGE_BUCKETS.IMAGES, result.outlineImageId);
+          setOutlineImageUrl(outlineUrl.toString());
+        }
         
         // Generate color mappings from extracted colors
         if (result.extractedColors) {
@@ -186,9 +206,10 @@ export default function ProjectEditor() {
           setColorMappings(mappings);
         }
 
+        const contourInfo = result.contourCount ? ` • ${result.contourCount} contours` : '';
         toast({
           title: 'Processing complete!',
-          description: `Extracted ${result.colorCount} colors.`,
+          description: `Extracted ${result.colorCount} colors${contourInfo}.`,
         });
         
         setActiveTab('colors');
@@ -449,15 +470,52 @@ export default function ProjectEditor() {
           </TabsContent>
 
           {/* Preview Tab */}
-          <TabsContent value="preview" className="mt-0">
+          <TabsContent value="preview" className="mt-0 space-y-4">
+            {/* Image Toggle Buttons */}
+            {(processedImageUrl || outlineImageUrl) && (
+              <div className="flex gap-2">
+                <Button
+                  variant={!showOutlineView ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setShowOutlineView(false)}
+                  className={!showOutlineView ? 'bg-gradient-warm' : ''}
+                >
+                  <Layers className="h-4 w-4 mr-1.5" />
+                  Colors
+                </Button>
+                <Button
+                  variant={showOutlineView ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setShowOutlineView(true)}
+                  disabled={!outlineImageUrl}
+                  className={showOutlineView ? 'bg-gradient-warm' : ''}
+                >
+                  <PenTool className="h-4 w-4 mr-1.5" />
+                  Outlines
+                </Button>
+              </div>
+            )}
+
             <Card className="border-0 shadow-soft">
               <CardContent className="p-4">
-                {previewImageUrl ? (
+                {/* Main Preview Image */}
+                {previewImageUrl && !showOutlineView ? (
                   <img
                     src={previewImageUrl}
                     alt="Stitch Preview"
                     className="w-full max-h-[50vh] object-contain rounded-lg bg-white"
                   />
+                ) : showOutlineView && outlineImageUrl ? (
+                  <div className="relative">
+                    <img
+                      src={outlineImageUrl}
+                      alt="Outline Preview"
+                      className="w-full max-h-[50vh] object-contain rounded-lg bg-white"
+                    />
+                    <div className="absolute top-2 right-2 px-2 py-1 rounded bg-background/80 backdrop-blur-sm text-xs font-medium">
+                      Contours: {project?.contourCount || '--'}
+                    </div>
+                  </div>
                 ) : processedImageUrl ? (
                   <img
                     src={processedImageUrl}
