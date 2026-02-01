@@ -42,6 +42,8 @@ interface ExportDialogProps {
   colorCount: number;
   isExporting: boolean;
   stats?: StitchStats | null;
+  regionAreaMm2?: number;
+  regionCount?: number;
 }
 
 const PRESET_INFO = {
@@ -76,6 +78,8 @@ export function ExportDialog({
   colorCount,
   isExporting,
   stats,
+  regionAreaMm2,
+  regionCount,
 }: ExportDialogProps) {
   const [selectedPreset, setSelectedPreset] = useState<QualityPreset>('balanced');
   const [customDensity, setCustomDensity] = useState<number>(5);
@@ -85,10 +89,11 @@ export function ExportDialog({
     ? customDensity
     : PRESET_INFO[selectedPreset].density;
 
-  // Estimate stitch count based on hoop size and density
+  // Estimate stitch count based on detected region area (fallback to hoop safe area)
   const estimateStitches = () => {
     const hoopArea = hoopSize === '100x100' ? 90 * 90 : 62 * 62; // Safe area in mm²
-    const baseStitches = hoopArea * currentDensity * 0.4; // Rough estimate
+    const area = regionAreaMm2 && regionAreaMm2 > 0 ? regionAreaMm2 : hoopArea;
+    const baseStitches = area * currentDensity * 0.4; // Rough estimate
     return Math.round(baseStitches);
   };
 
@@ -240,6 +245,9 @@ export function ExportDialog({
                 {hoopSize === '100x100' ? '100×100mm' : '70×70mm'}
               </Badge>
               <Badge variant="secondary">{colorCount} colors</Badge>
+              {regionCount ? (
+                <Badge variant="secondary">{regionCount} regions</Badge>
+              ) : null}
               <Badge variant="outline">{currentDensity} stitches/mm</Badge>
             </div>
           </div>

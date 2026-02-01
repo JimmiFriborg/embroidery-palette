@@ -479,10 +479,16 @@ def generate_fill_stitches_legacy(pattern, mask, scale_x, scale_y):
             ey = int((y - mask.shape[0] / 2) * scale_y)
             
             if first_stitch:
-                pattern.add_stitch_absolute(pyembroidery.MOVE, ex, ey)
+                try:
+                    pattern.move_abs(ex, ey)
+                except Exception:
+                    pattern.add_stitch_absolute(getattr(pyembroidery, 'JUMP', pyembroidery.STITCH), ex, ey)
                 first_stitch = False
             else:
-                pattern.add_stitch_absolute(pyembroidery.STITCH, ex, ey)
+                try:
+                    pattern.stitch_abs(ex, ey)
+                except Exception:
+                    pattern.add_stitch_absolute(pyembroidery.STITCH, ex, ey)
                 stitch_count += 1
         
         direction *= -1

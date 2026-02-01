@@ -86,11 +86,18 @@ def generate_stitches(
             
             for i, (x, y) in enumerate(stitches):
                 if first_stitch_in_layer and i == 0:
-                    # First stitch: move without sewing
-                    pattern.add_stitch_absolute(pyembroidery.MOVE, x, y)
+                    # First stitch: move without sewing (use move_abs for compatibility)
+                    try:
+                        pattern.move_abs(x, y)
+                    except Exception:
+                        # Fallback if move_abs not available
+                        pattern.add_stitch_absolute(getattr(pyembroidery, 'JUMP', pyembroidery.STITCH), x, y)
                     first_stitch_in_layer = False
                 else:
-                    pattern.add_stitch_absolute(pyembroidery.STITCH, x, y)
+                    try:
+                        pattern.stitch_abs(x, y)
+                    except Exception:
+                        pattern.add_stitch_absolute(pyembroidery.STITCH, x, y)
         
         # Color change after this layer
         pattern.color_change()
