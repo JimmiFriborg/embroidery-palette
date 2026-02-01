@@ -144,9 +144,10 @@ export default function NewProject() {
       navigate(`/project/${newProject.$id}`);
     } catch (error) {
       console.error('Failed to create project:', error);
+      const message = error instanceof Error ? error.message : 'Unknown error';
       toast({
-        title: 'Error',
-        description: 'Failed to create project. Please check your Appwrite setup.',
+        title: 'Error creating project',
+        description: message,
         variant: 'destructive',
       });
     } finally {

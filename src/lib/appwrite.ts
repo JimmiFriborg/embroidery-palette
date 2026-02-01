@@ -10,9 +10,14 @@ if (!endpoint || !projectId) {
   console.warn('Appwrite configuration missing. Please set VITE_APPWRITE_ENDPOINT and VITE_APPWRITE_PROJECT_ID');
 }
 
+export const APPWRITE_CONFIG = {
+  endpoint: endpoint || 'https://cloud.appwrite.io/v1',
+  projectId: projectId || '',
+};
+
 client
-  .setEndpoint(endpoint || 'https://cloud.appwrite.io/v1')
-  .setProject(projectId || '');
+  .setEndpoint(APPWRITE_CONFIG.endpoint)
+  .setProject(APPWRITE_CONFIG.projectId);
 
 // Export Appwrite services
 export const account = new Account(client);
