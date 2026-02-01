@@ -156,6 +156,7 @@ export default function ProjectEditor() {
         threadNumber: closestThread.number,
         threadName: closestThread.name,
         threadColor: closestThread.hex,
+        skip: false,
       };
     });
   };
@@ -204,6 +205,7 @@ export default function ProjectEditor() {
               threadNumber: closestThread.number,
               threadName: closestThread.name,
               threadColor: closestThread.hex,
+              skip: false,
             };
           });
           setColorMappings(mappings);
@@ -235,12 +237,20 @@ export default function ProjectEditor() {
     if (selectedColorIndex === null) return;
     
     const updatedMappings = [...colorMappings];
-    updatedMappings[selectedColorIndex] = {
-      ...updatedMappings[selectedColorIndex],
-      threadNumber: thread.number,
-      threadName: thread.name,
-      threadColor: thread.hex,
-    };
+    if (thread.number === 'SKIP') {
+      updatedMappings[selectedColorIndex] = {
+        ...updatedMappings[selectedColorIndex],
+        skip: true,
+      };
+    } else {
+      updatedMappings[selectedColorIndex] = {
+        ...updatedMappings[selectedColorIndex],
+        threadNumber: thread.number,
+        threadName: thread.name,
+        threadColor: thread.hex,
+        skip: false,
+      };
+    }
     setColorMappings(updatedMappings);
     setSelectedColorIndex(null);
   };
@@ -439,7 +449,7 @@ export default function ProjectEditor() {
                         selectedColorIndex === index
                           ? 'border-primary ring-2 ring-primary/20'
                           : 'border-muted hover:border-muted-foreground/50'
-                      }`}
+                      } ${mapping.skip ? 'opacity-60' : ''}`}
                     >
                       <div className="flex items-center gap-3">
                         <div
@@ -447,13 +457,35 @@ export default function ProjectEditor() {
                           style={{ backgroundColor: mapping.originalColor }}
                         />
                         <div className="flex-1 min-w-0">
-                          <div className="text-xs text-muted-foreground">#{mapping.threadNumber}</div>
-                          <div className="text-sm font-medium truncate">{mapping.threadName}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {mapping.skip ? 'SKIPPED' : `#${mapping.threadNumber}`}
+                          </div>
+                          <div className="text-sm font-medium truncate">
+                            {mapping.skip ? 'Not stitched' : mapping.threadName}
+                          </div>
                         </div>
                         <div
                           className="w-6 h-6 rounded-full border-2 border-muted flex-shrink-0"
-                          style={{ backgroundColor: mapping.threadColor }}
+                          style={{ backgroundColor: mapping.skip ? '#FFFFFF' : mapping.threadColor }}
                         />
+                      </div>
+                      <div className="mt-2 flex justify-end">
+                        <button
+                          type="button"
+                          className={`text-xs px-2 py-1 rounded-full border ${mapping.skip ? 'border-primary text-primary' : 'border-muted text-muted-foreground'}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const updated = [...colorMappings];
+                            const wasSkipped = !!updated[index].skip;
+                            updated[index] = {
+                              ...updated[index],
+                              skip: !wasSkipped,
+                            };
+                            setColorMappings(updated);
+                          }}
+                        >
+                          {mapping.skip ? 'Unskip' : 'Skip'}
+                        </button>
                       </div>
                     </button>
                   ))}

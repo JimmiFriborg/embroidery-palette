@@ -11,9 +11,10 @@ interface ThreadPickerProps {
   onClose: () => void;
   onSelect: (thread: BrotherThread) => void;
   currentColor?: string;
+  allowSkip?: boolean;
 }
 
-export function ThreadPicker({ isOpen, onClose, onSelect, currentColor }: ThreadPickerProps) {
+export function ThreadPicker({ isOpen, onClose, onSelect, currentColor, allowSkip = true }: ThreadPickerProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   
@@ -77,6 +78,24 @@ export function ThreadPicker({ isOpen, onClose, onSelect, currentColor }: Thread
             </Button>
           )}
         </div>
+
+        {/* Skip Option */}
+        {allowSkip && !searchQuery && !selectedCategory && (
+          <div className="mb-4 p-3 rounded-xl bg-destructive/5 border-2 border-destructive/20">
+            <button
+              onClick={() => handleSelect({ number: 'SKIP', name: 'Skip color', hex: '#FFFFFF', category: 'Skip' })}
+              className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-destructive/10 transition-colors"
+            >
+              <div className="w-10 h-10 rounded-lg border-2 border-dashed border-destructive/40 flex items-center justify-center text-destructive font-bold">
+                —
+              </div>
+              <div className="text-left">
+                <div className="font-semibold text-destructive">Skip this color</div>
+                <div className="text-xs text-muted-foreground">Do not stitch this color</div>
+              </div>
+            </button>
+          </div>
+        )}
 
         {/* Suggested Thread */}
         {suggestedThread && !searchQuery && !selectedCategory && (

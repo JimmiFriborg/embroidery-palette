@@ -66,6 +66,7 @@ export interface ColorMapping {
   threadNumber: string;
   threadName: string;
   threadColor: string; // hex
+  skip?: boolean; // if true, skip this color entirely
 }
 
 export interface UserPreferences {

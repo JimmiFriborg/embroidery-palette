@@ -26,7 +26,7 @@ interface StitchPreviewProps {
   /** Hoop size */
   hoopSize?: '100x100' | '70x70';
   /** Color mappings for legend */
-  colorMappings?: { originalColor: string; threadColor: string; threadName: string }[];
+  colorMappings?: { originalColor: string; threadColor: string; threadName: string; skip?: boolean }[];
   /** Allow file upload */
   allowUpload?: boolean;
   /** Canvas width */

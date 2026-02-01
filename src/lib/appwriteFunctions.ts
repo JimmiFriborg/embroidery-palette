@@ -43,6 +43,7 @@ interface GeneratePesPayload {
     threadNumber: string;
     threadName: string;
     threadColor: string;
+    skip?: boolean;
   }>;
   hoopSize: '100x100' | '70x70';
   qualityPreset?: 'fast' | 'balanced' | 'quality';

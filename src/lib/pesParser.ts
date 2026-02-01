@@ -423,7 +423,7 @@ export function renderPesPattern(
 export function generateStitchPreview(
   canvas: HTMLCanvasElement,
   processedImageUrl: string | null,
-  colorMappings: { originalColor: string; threadColor: string }[],
+  colorMappings: { originalColor: string; threadColor: string; skip?: boolean }[],
   hoopSize: '100x100' | '70x70'
 ): void {
   const ctx = canvas.getContext('2d');
@@ -474,12 +474,13 @@ export function generateStitchPreview(
     img.src = processedImageUrl;
   }
   
-  // Draw color legend
+  // Draw color legend (skip filtered)
+  const visibleMappings = colorMappings.filter(m => !m.skip);
   const legendY = hoopY + drawSize + 30;
   const swatchSize = 16;
-  const legendX = (canvas.width - colorMappings.length * (swatchSize + 8)) / 2;
+  const legendX = (canvas.width - visibleMappings.length * (swatchSize + 8)) / 2;
   
-  colorMappings.forEach((mapping, i) => {
+  visibleMappings.forEach((mapping, i) => {
     const x = legendX + i * (swatchSize + 8);
     ctx.fillStyle = mapping.threadColor || mapping.originalColor;
     ctx.fillRect(x, legendY, swatchSize, swatchSize);

@@ -255,7 +255,8 @@ def generate_pes_phase2(context, image_np, color_mappings, hoop_size, quality_pr
         regions,
         hoop_size=hoop_size,
         quality_preset=preset,
-        density_override=density_override
+        density_multiplier=(density_override / 5.0) if density_override else 1.0,
+        thread_mappings={m['originalColor'].upper(): m for m in color_mappings if not m.get('skip')}
     )
     
     context.log(f'  Estimated stitches: {stitch_plan.total_stitch_estimate:,}')
@@ -268,10 +269,27 @@ def generate_pes_phase2(context, image_np, color_mappings, hoop_size, quality_pr
     # Stage 3: Generate stitches
     context.log('Stage 3: Generating stitch coordinates...')
     
-    # Build color mapping lookup
+    # Build color mapping lookup (skip any marked as skip)
     color_to_thread = {}
+    color_order = []
+    skip_colors = set()
     for mapping in color_mappings:
-        color_to_thread[mapping['originalColor'].upper()] = mapping
+        if mapping.get('skip'):
+            skip_colors.add(mapping['originalColor'].upper())
+            continue
+        color_key = mapping['originalColor'].upper()
+        color_to_thread[color_key] = mapping
+        color_order.append(color_key)
+    
+    # Filter out skipped colors from plan
+    if skip_colors:
+        stitch_plan.layers = [l for l in stitch_plan.layers if l.color_hex.upper() not in skip_colors]
+        stitch_plan.total_stitches = sum(l.estimated_stitches for l in stitch_plan.layers)
+    
+    # Sort layers to match mapping order (ensures colors are sewn in full blocks)
+    if color_order:
+        order_index = {c: i for i, c in enumerate(color_order)}
+        stitch_plan.layers.sort(key=lambda l: order_index.get(l.color_hex.upper(), 999))
     
     pattern = generate_stitches(stitch_plan, color_to_thread)
     
@@ -330,6 +348,8 @@ def generate_pes_legacy(context, image_np, color_mappings, hoop_size, design_nam
     # Build color mapping lookup
     color_to_thread = {}
     for mapping in color_mappings:
+        if mapping.get('skip'):
+            continue
         color_to_thread[mapping['originalColor'].upper()] = mapping
     
     # Scale factor: pixels to embroidery units (10 units = 1mm in PES)
