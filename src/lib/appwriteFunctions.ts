@@ -98,6 +98,49 @@ async function executeFunction<T>(functionId: string, data: object): Promise<T> 
   return execution as unknown as T;
 }
 
+// Async execution with polling (for long-running functions like PES export)
+async function executeFunctionAndWait<T>(
+  functionId: string,
+  data: object,
+  timeoutMs = 120000,
+  pollMs = 1500
+): Promise<T> {
+  const execution = await functions.createExecution(
+    functionId,
+    JSON.stringify(data),
+    true,   // async
+    '/',
+    'POST',
+    { 'Content-Type': 'application/json' }
+  );
+
+  const start = Date.now();
+  let status = execution.status;
+  let exec = execution;
+
+  while (status !== 'completed') {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error('Function execution timed out. Please try again.');
+    }
+    await new Promise(r => setTimeout(r, pollMs));
+    exec = await functions.getExecution(functionId, exec.$id);
+    status = exec.status;
+    if (status === 'failed') {
+      throw new Error(exec.responseBody || 'Function execution failed');
+    }
+  }
+
+  if (exec.responseStatusCode >= 400) {
+    throw new Error(exec.responseBody || `Function returned status ${exec.responseStatusCode}`);
+  }
+
+  if (exec.responseBody) {
+    return JSON.parse(exec.responseBody);
+  }
+
+  return exec as unknown as T;
+}
+
 /**
  * Process an image for embroidery
  * - Removes background
@@ -125,7 +168,8 @@ export async function processImage(payload: ProcessImagePayload): Promise<Proces
  */
 export async function generatePes(payload: GeneratePesPayload): Promise<GeneratePesResponse> {
   try {
-    const response = await executeFunction<GeneratePesResponse>('generate-pes', payload);
+    // PES generation can be slow → use async + polling to avoid 30s timeout
+    const response = await executeFunctionAndWait<GeneratePesResponse>('generate-pes', payload, 180000, 2000);
     return response;
   } catch (error) {
     console.error('Generate PES error:', error);

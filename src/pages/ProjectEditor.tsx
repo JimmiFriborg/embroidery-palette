@@ -41,6 +41,7 @@ export default function ProjectEditor() {
   const [originalImageUrl, setOriginalImageUrl] = useState<string | null>(null);
   const [processedImageUrl, setProcessedImageUrl] = useState<string | null>(null);
   const [outlineImageUrl, setOutlineImageUrl] = useState<string | null>(null);
+  const [previewMode, setPreviewMode] = useState<'processed' | 'outline' | 'original'>('processed');
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
   const [pesDownloadUrl, setPesDownloadUrl] = useState<string | null>(null);
   const [colorMappings, setColorMappings] = useState<ColorMapping[]>([]);
@@ -190,6 +191,10 @@ export default function ProjectEditor() {
         // Update local state - processed image
         const fileUrl = storage.getFilePreview(STORAGE_BUCKETS.IMAGES, result.processedImageId);
         setProcessedImageUrl(fileUrl.toString());
+
+        // Auto-switch to Preview tab after processing
+        setActiveTab('preview');
+        setPreviewMode('processed');
         
         // Load outline image if available
         if (result.outlineImageId) {
@@ -519,23 +524,34 @@ export default function ProjectEditor() {
             {(processedImageUrl || outlineImageUrl || pesPattern) && (
               <div className="flex gap-2 flex-wrap">
                 <Button
-                  variant={!showOutlineView && !pesPattern ? 'default' : 'outline'}
+                  variant={previewMode === 'processed' ? 'default' : 'outline'}
                   size="sm"
-                  onClick={() => { setShowOutlineView(false); }}
-                  className={!showOutlineView && !pesPattern ? 'bg-gradient-warm' : ''}
+                  onClick={() => { setPreviewMode('processed'); }}
+                  className={previewMode === 'processed' ? 'bg-gradient-warm' : ''}
+                  disabled={!processedImageUrl}
                 >
                   <Layers className="h-4 w-4 mr-1.5" />
                   Colors
                 </Button>
                 <Button
-                  variant={showOutlineView ? 'default' : 'outline'}
+                  variant={previewMode === 'outline' ? 'default' : 'outline'}
                   size="sm"
-                  onClick={() => setShowOutlineView(true)}
+                  onClick={() => setPreviewMode('outline')}
                   disabled={!outlineImageUrl}
-                  className={showOutlineView ? 'bg-gradient-warm' : ''}
+                  className={previewMode === 'outline' ? 'bg-gradient-warm' : ''}
                 >
                   <PenTool className="h-4 w-4 mr-1.5" />
                   Outlines
+                </Button>
+                <Button
+                  variant={previewMode === 'original' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setPreviewMode('original')}
+                  disabled={!originalImageUrl}
+                  className={previewMode === 'original' ? 'bg-gradient-warm' : ''}
+                >
+                  <ImageIcon className="h-4 w-4 mr-1.5" />
+                  Original
                 </Button>
               </div>
             )}
@@ -543,7 +559,13 @@ export default function ProjectEditor() {
             {/* Stitch Preview Component */}
             <StitchPreview
               pattern={pesPattern}
-              processedImageUrl={showOutlineView ? outlineImageUrl : processedImageUrl}
+              processedImageUrl={
+                previewMode === 'outline'
+                  ? outlineImageUrl
+                  : previewMode === 'original'
+                    ? originalImageUrl
+                    : processedImageUrl
+              }
               hoopSize={project?.hoopSize || '100x100'}
               colorMappings={colorMappings.map(m => ({
                 originalColor: m.originalColor,
