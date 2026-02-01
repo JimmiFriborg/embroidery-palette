@@ -42,11 +42,7 @@ try:
 except ImportError:
     pyembroidery = None
 
-# OpenCV for image processing
-try:
-    import cv2
-except ImportError:
-    cv2 = None
+# No OpenCV needed - using scikit-image + PIL
 
 
 # Brother thread database

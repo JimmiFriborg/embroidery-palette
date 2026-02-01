@@ -1,463 +1,364 @@
 """
-Shape Analysis Module for PP1 Embroidery
+Shape Analysis Module for Embroidery Digitizing
+Extracts and classifies regions from quantized images for stitch planning.
 
-Stage 3 of the digitizing pipeline:
-- Extract contours per color
-- Classify regions: fill / outline / detail
-- Calculate principal angles (for stitch direction)
-- Filter noise (< 2mm² areas)
-- Simplify contours (Douglas-Peucker)
-
-Optimized for Brother PP1 hobbyist embroidery machine.
+Uses scikit-image + scipy + numpy (no OpenCV dependency).
 """
 
 import numpy as np
 from dataclasses import dataclass, field
-from typing import List, Tuple, Optional, Dict
-import math
-
-# Try to import OpenCV
-try:
-    import cv2
-    HAS_OPENCV = True
-except ImportError:
-    HAS_OPENCV = False
-
-
-# Region classification thresholds
-MIN_AREA_MM2 = 2.0           # Ignore regions smaller than this
-MIN_PERIMETER_MM = 3.0       # Ignore very short contours
-OUTLINE_COMPACTNESS = 0.1    # Below this = outline (thin stroke)
-OUTLINE_ASPECT_RATIO = 8.0   # Above this = outline
-DETAIL_AREA_MM2 = 5.0        # Below this = detail (small fill)
-FILL_AREA_MM2 = 5.0          # Above this = full fill
-
-# Simplification
-SIMPLIFY_EPSILON_MM = 0.3    # Douglas-Peucker epsilon
+from typing import List, Tuple, Optional
 
 
 @dataclass
 class Region:
-    """
-    A single embroidery region extracted from the image.
-    
-    Contains all information needed for stitch planning.
-    """
-    color_hex: str                          # e.g., '#FF0000'
-    color_rgb: Tuple[int, int, int]         # (255, 0, 0)
-    region_type: str                        # 'fill', 'outline', or 'detail'
-    contours: List[np.ndarray]              # Simplified contour points
-    holes: List[np.ndarray] = field(default_factory=list)  # Interior holes
-    area_mm2: float = 0.0                   # Area in mm²
-    perimeter_mm: float = 0.0               # Perimeter in mm
-    principal_angle: float = 0.0            # Degrees, for stitch direction
-    bounding_box: Tuple[int, int, int, int] = (0, 0, 0, 0)  # x, y, w, h
-    aspect_ratio: float = 1.0               # width / height
-    compactness: float = 1.0                # 4π * area / perimeter²
-    centroid: Tuple[float, float] = (0.0, 0.0)
+    """Represents an embroidery region with its properties."""
+    color: str  # Hex color string
+    region_type: str  # 'fill', 'outline', or 'detail'
+    contours: List[np.ndarray]  # List of contour arrays, each (N, 2)
+    holes: List[np.ndarray] = field(default_factory=list)
+    area_mm2: float = 0.0
+    perimeter_mm: float = 0.0
+    bounding_box: Optional[Tuple[int, int, int, int]] = None  # x, y, w, h
+    principal_angle: float = 0.0  # Degrees, for stitch direction
+    has_holes: bool = False
+    compactness: float = 0.0
+
+    def __post_init__(self):
+        self.has_holes = len(self.holes) > 0
 
 
-def extract_regions(
-    quantized_image: np.ndarray,
-    color_palette: List[Tuple[int, int, int]],
-    mask: Optional[np.ndarray] = None,
-    pixels_per_mm: float = 10.0,
-    min_area_mm2: float = MIN_AREA_MM2,
-    simplify_epsilon_mm: float = SIMPLIFY_EPSILON_MM,
-) -> List[Region]:
+# Default pixels per mm (matches image_preprocess)
+DEFAULT_PX_PER_MM = 10
+
+
+def extract_regions(image_np, n_colors=6, alpha_mask=None, min_area_mm2=2.0):
     """
-    Extract and classify embroidery regions from a quantized image.
-    
-    For each color in the palette:
-    1. Create binary mask for that color
-    2. Find contours
-    3. Filter by size
-    4. Classify (fill/outline/detail)
-    5. Simplify contours
-    6. Calculate properties
+    Extract color regions from image with quantization and analysis.
     
     Args:
-        quantized_image: Color-quantized RGB image
-        color_palette: List of RGB tuples in the image
-        mask: Optional foreground mask
-        pixels_per_mm: Scale factor
-        min_area_mm2: Minimum region area
-        simplify_epsilon_mm: Contour simplification tolerance
-        
+        image_np: RGB numpy array
+        n_colors: Number of colors to quantize to
+        alpha_mask: Optional foreground mask (255=fg)
+        min_area_mm2: Minimum region area to keep
+    
     Returns:
-        List of Region objects, sorted by area (largest first)
+        regions: List of Region objects
+        quantized: Quantized RGB image
+        palette: List of RGB color tuples
     """
-    if not HAS_OPENCV:
-        return _extract_regions_fallback(
-            quantized_image, color_palette, pixels_per_mm
-        )
+    # Quantize colors
+    quantized, palette = quantize_colors_kmeans(image_np, n_colors)
     
+    # Apply mask if provided
+    if alpha_mask is not None:
+        bg_mask = alpha_mask < 127
+        quantized[bg_mask] = [255, 255, 255]
+    
+    # Extract regions for each color
     regions = []
-    px_per_mm2 = pixels_per_mm ** 2
-    min_area_px = min_area_mm2 * px_per_mm2
-    epsilon_px = simplify_epsilon_mm * pixels_per_mm
+    min_area_px = min_area_mm2 * (DEFAULT_PX_PER_MM ** 2)
     
-    for color_rgb in color_palette:
-        # Skip white (background)
-        if color_rgb == (255, 255, 255) or sum(color_rgb) > 750:
+    for color_rgb in palette:
+        color_hex = '#{:02x}{:02x}{:02x}'.format(int(color_rgb[0]), int(color_rgb[1]), int(color_rgb[2]))
+        
+        # Skip white/near-white (background)
+        if all(c > 240 for c in color_rgb):
             continue
         
         # Create mask for this color
-        color_mask = create_color_mask(quantized_image, color_rgb)
+        color_mask = create_color_mask(quantized, color_rgb)
         
-        # Apply foreground mask if provided
-        if mask is not None:
-            color_mask = cv2.bitwise_and(color_mask, mask)
+        # Apply alpha mask
+        if alpha_mask is not None:
+            color_mask = color_mask & (alpha_mask > 127)
         
-        # Find contours with hierarchy (for hole detection)
-        contours, hierarchy = cv2.findContours(
-            color_mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE
+        # Find contours
+        contours = find_contours(color_mask)
+        
+        if not contours:
+            continue
+        
+        # Filter and classify contours
+        valid_contours = []
+        total_area_px = 0
+        total_perimeter_px = 0
+        
+        for contour in contours:
+            area = polygon_area(contour)
+            if area < min_area_px:
+                continue
+            
+            perimeter = polygon_perimeter(contour)
+            min_perimeter_px = 3.0 * DEFAULT_PX_PER_MM  # 3mm minimum
+            if perimeter < min_perimeter_px:
+                continue
+            
+            # Simplify contour (Douglas-Peucker)
+            simplified = simplify_polygon(contour, tolerance=1.5)
+            if len(simplified) < 3:
+                continue
+            
+            valid_contours.append(simplified)
+            total_area_px += area
+            total_perimeter_px += perimeter
+        
+        if not valid_contours:
+            continue
+        
+        # Calculate region properties
+        area_mm2 = total_area_px / (DEFAULT_PX_PER_MM ** 2)
+        perimeter_mm = total_perimeter_px / DEFAULT_PX_PER_MM
+        
+        # Classify region type
+        region_type = classify_region(
+            area_mm2, perimeter_mm, valid_contours
         )
         
-        if not contours or hierarchy is None:
-            continue
+        # Bounding box
+        all_points = np.vstack(valid_contours)
+        x_min, y_min = all_points.min(axis=0)
+        x_max, y_max = all_points.max(axis=0)
+        bbox = (int(x_min), int(y_min), int(x_max - x_min), int(y_max - y_min))
         
-        hierarchy = hierarchy[0]
+        # Principal angle for stitch direction
+        angle = compute_principal_angle(all_points)
         
-        # Process each outer contour
-        for i, contour in enumerate(contours):
-            # Skip if this is a hole (has parent)
-            if hierarchy[i][3] != -1:
-                continue
-            
-            area_px = cv2.contourArea(contour)
-            if area_px < min_area_px:
-                continue
-            
-            perimeter_px = cv2.arcLength(contour, True)
-            if perimeter_px < min_area_mm2 * pixels_per_mm:
-                continue
-            
-            # Simplify contour
-            simplified = cv2.approxPolyDP(contour, epsilon_px, True)
-            
-            # Find holes (child contours)
-            holes = []
-            child_idx = hierarchy[i][2]  # First child
-            while child_idx != -1:
-                hole = contours[child_idx]
-                if cv2.contourArea(hole) > min_area_px * 0.5:
-                    holes.append(cv2.approxPolyDP(hole, epsilon_px, True))
-                child_idx = hierarchy[child_idx][0]  # Next sibling
-            
-            # Calculate properties
-            region = create_region_from_contour(
-                simplified, holes, color_rgb, pixels_per_mm
-            )
-            
-            regions.append(region)
-    
-    # Sort by area (largest first - stitch order optimization)
-    regions.sort(key=lambda r: r.area_mm2, reverse=True)
-    
-    # Filter overlapping/duplicate regions
-    regions = filter_overlapping_regions(regions, pixels_per_mm)
-    
-    return regions
-
-
-def create_color_mask(
-    image: np.ndarray,
-    color_rgb: Tuple[int, int, int],
-    tolerance: int = 5,
-) -> np.ndarray:
-    """Create binary mask for a specific color."""
-    lower = np.array([max(0, c - tolerance) for c in color_rgb])
-    upper = np.array([min(255, c + tolerance) for c in color_rgb])
-    return cv2.inRange(image, lower, upper)
-
-
-def create_region_from_contour(
-    contour: np.ndarray,
-    holes: List[np.ndarray],
-    color_rgb: Tuple[int, int, int],
-    pixels_per_mm: float,
-) -> Region:
-    """
-    Create a Region object from a contour.
-    
-    Calculates all geometric properties and classifies the region.
-    """
-    px_per_mm2 = pixels_per_mm ** 2
-    
-    # Basic measurements
-    area_px = cv2.contourArea(contour)
-    perimeter_px = cv2.arcLength(contour, True)
-    area_mm2 = area_px / px_per_mm2
-    perimeter_mm = perimeter_px / pixels_per_mm
-    
-    # Bounding box and aspect ratio
-    x, y, w, h = cv2.boundingRect(contour)
-    aspect_ratio = w / max(h, 1)
-    
-    # Compactness (circularity): 4π * area / perimeter²
-    # Circle = 1.0, very thin shape = close to 0
-    if perimeter_px > 0:
-        compactness = (4 * math.pi * area_px) / (perimeter_px ** 2)
-    else:
-        compactness = 0
-    
-    # Centroid
-    M = cv2.moments(contour)
-    if M['m00'] != 0:
-        cx = M['m10'] / M['m00']
-        cy = M['m01'] / M['m00']
-    else:
-        cx, cy = x + w/2, y + h/2
-    
-    # Principal angle (orientation for stitch direction)
-    principal_angle = calculate_principal_angle(contour)
-    
-    # Classify region type
-    region_type = classify_region(
-        area_mm2, perimeter_mm, compactness, aspect_ratio
-    )
-    
-    # Color hex
-    color_hex = '#{:02X}{:02X}{:02X}'.format(*color_rgb)
-    
-    return Region(
-        color_hex=color_hex,
-        color_rgb=color_rgb,
-        region_type=region_type,
-        contours=[contour],
-        holes=holes,
-        area_mm2=area_mm2,
-        perimeter_mm=perimeter_mm,
-        principal_angle=principal_angle,
-        bounding_box=(x, y, w, h),
-        aspect_ratio=aspect_ratio,
-        compactness=compactness,
-        centroid=(cx, cy),
-    )
-
-
-def classify_region(
-    area_mm2: float,
-    perimeter_mm: float,
-    compactness: float,
-    aspect_ratio: float,
-) -> str:
-    """
-    Classify a region as 'fill', 'outline', or 'detail'.
-    
-    Logic:
-    - Outline: Very thin (low compactness or high aspect ratio)
-    - Detail: Small area (< 5mm²)
-    - Fill: Everything else (large solid areas)
-    """
-    # Very thin shapes → outline only (bean stitch)
-    if compactness < OUTLINE_COMPACTNESS:
-        return 'outline'
-    
-    if aspect_ratio > OUTLINE_ASPECT_RATIO:
-        return 'outline'
-    
-    # Small shapes → detail (light fill)
-    if area_mm2 < DETAIL_AREA_MM2:
-        return 'detail'
-    
-    # Large shapes → full fill
-    return 'fill'
-
-
-def calculate_principal_angle(contour: np.ndarray) -> float:
-    """
-    Calculate the principal axis angle of a contour.
-    
-    This determines the optimal stitch direction for fills.
-    Uses PCA on contour points to find the longest axis.
-    
-    Returns angle in degrees (0-180).
-    """
-    if len(contour) < 5:
-        return 0.0
-    
-    # Flatten contour points
-    points = contour.reshape(-1, 2).astype(np.float64)
-    
-    # Try fitting an ellipse (more robust for regular shapes)
-    if len(points) >= 5:
-        try:
-            ellipse = cv2.fitEllipse(contour)
-            angle = ellipse[2]  # Rotation angle
-            return angle % 180
-        except:
-            pass
-    
-    # Fallback: PCA on contour points
-    mean = np.mean(points, axis=0)
-    centered = points - mean
-    cov = np.cov(centered.T)
-    
-    if cov.shape == (2, 2):
-        eigenvalues, eigenvectors = np.linalg.eig(cov)
-        # Principal axis is eigenvector with largest eigenvalue
-        idx = np.argmax(eigenvalues)
-        principal = eigenvectors[:, idx]
-        angle = math.degrees(math.atan2(principal[1], principal[0]))
-        return angle % 180
-    
-    return 0.0
-
-
-def filter_overlapping_regions(
-    regions: List[Region],
-    pixels_per_mm: float,
-    overlap_threshold: float = 0.8,
-) -> List[Region]:
-    """
-    Remove regions that are mostly contained within larger regions.
-    
-    This cleans up artifacts from color quantization where small
-    noise regions appear inside larger fills.
-    """
-    if len(regions) <= 1:
-        return regions
-    
-    filtered = []
-    
-    for i, region in enumerate(regions):
-        is_contained = False
-        
-        for j, other in enumerate(regions):
-            if i == j:
-                continue
-            
-            # Skip if other region is smaller
-            if other.area_mm2 <= region.area_mm2:
-                continue
-            
-            # Check if bounding boxes overlap significantly
-            r_box = region.bounding_box
-            o_box = other.bounding_box
-            
-            # Calculate intersection
-            x1 = max(r_box[0], o_box[0])
-            y1 = max(r_box[1], o_box[1])
-            x2 = min(r_box[0] + r_box[2], o_box[0] + o_box[2])
-            y2 = min(r_box[1] + r_box[3], o_box[1] + o_box[3])
-            
-            if x1 < x2 and y1 < y2:
-                intersection_area = (x2 - x1) * (y2 - y1)
-                region_box_area = r_box[2] * r_box[3]
-                
-                if region_box_area > 0:
-                    overlap = intersection_area / region_box_area
-                    if overlap > overlap_threshold:
-                        # Region is mostly contained, skip it
-                        is_contained = True
-                        break
-        
-        if not is_contained:
-            filtered.append(region)
-    
-    return filtered
-
-
-def merge_regions_by_color(regions: List[Region]) -> Dict[str, List[Region]]:
-    """Group regions by color hex code."""
-    by_color = {}
-    for region in regions:
-        if region.color_hex not in by_color:
-            by_color[region.color_hex] = []
-        by_color[region.color_hex].append(region)
-    return by_color
-
-
-def get_region_stats(regions: List[Region]) -> dict:
-    """Get summary statistics for a list of regions."""
-    if not regions:
-        return {
-            'count': 0,
-            'total_area_mm2': 0,
-            'types': {'fill': 0, 'outline': 0, 'detail': 0},
-            'colors': [],
-        }
-    
-    types = {'fill': 0, 'outline': 0, 'detail': 0}
-    colors = set()
-    total_area = 0
-    
-    for r in regions:
-        types[r.region_type] += 1
-        colors.add(r.color_hex)
-        total_area += r.area_mm2
-    
-    return {
-        'count': len(regions),
-        'total_area_mm2': total_area,
-        'types': types,
-        'colors': list(colors),
-    }
-
-
-def _extract_regions_fallback(
-    quantized_image: np.ndarray,
-    color_palette: List[Tuple[int, int, int]],
-    pixels_per_mm: float,
-) -> List[Region]:
-    """
-    Fallback region extraction without OpenCV.
-    
-    Creates simple bounding-box regions for each color.
-    Less accurate but functional.
-    """
-    regions = []
-    px_per_mm2 = pixels_per_mm ** 2
-    
-    for color_rgb in color_palette:
-        if color_rgb == (255, 255, 255):
-            continue
-        
-        # Find pixels of this color
-        mask = np.all(quantized_image == color_rgb, axis=2)
-        if not np.any(mask):
-            continue
-        
-        # Get bounding box
-        rows = np.any(mask, axis=1)
-        cols = np.any(mask, axis=0)
-        if not np.any(rows) or not np.any(cols):
-            continue
-        
-        y_min, y_max = np.where(rows)[0][[0, -1]]
-        x_min, x_max = np.where(cols)[0][[0, -1]]
-        
-        w = x_max - x_min + 1
-        h = y_max - y_min + 1
-        area_px = np.sum(mask)
-        area_mm2 = area_px / px_per_mm2
-        
-        if area_mm2 < MIN_AREA_MM2:
-            continue
-        
-        # Create simple rectangular contour
-        contour = np.array([
-            [[x_min, y_min]],
-            [[x_max, y_min]],
-            [[x_max, y_max]],
-            [[x_min, y_max]],
-        ], dtype=np.int32)
-        
-        color_hex = '#{:02X}{:02X}{:02X}'.format(*color_rgb)
+        # Compactness
+        compactness = 0.0
+        if perimeter_mm > 0:
+            compactness = (4 * np.pi * area_mm2) / (perimeter_mm ** 2)
         
         region = Region(
-            color_hex=color_hex,
-            color_rgb=color_rgb,
-            region_type='fill' if area_mm2 > DETAIL_AREA_MM2 else 'detail',
-            contours=[contour],
-            area_mm2=area_mm2,
-            perimeter_mm=2 * (w + h) / pixels_per_mm,
-            bounding_box=(x_min, y_min, w, h),
-            aspect_ratio=w / max(h, 1),
-            centroid=((x_min + x_max) / 2, (y_min + y_max) / 2),
+            color=color_hex,
+            region_type=region_type,
+            contours=valid_contours,
+            area_mm2=round(area_mm2, 2),
+            perimeter_mm=round(perimeter_mm, 2),
+            bounding_box=bbox,
+            principal_angle=round(angle, 1),
+            compactness=round(compactness, 3),
         )
         regions.append(region)
     
-    return regions
+    return regions, quantized, palette
+
+
+def quantize_colors_kmeans(image_np, n_colors):
+    """
+    Quantize image colors using K-means clustering in LAB color space.
+    Uses scipy for clustering (no sklearn needed).
+    """
+    try:
+        from skimage.color import rgb2lab, lab2rgb
+        from scipy.cluster.vq import kmeans2
+        
+        # Convert to LAB for perceptually uniform clustering
+        img_float = image_np.astype(np.float64) / 255.0
+        lab_image = rgb2lab(img_float)
+        
+        # Reshape to pixel list
+        h, w = lab_image.shape[:2]
+        pixels = lab_image.reshape(-1, 3).astype(np.float64)
+        
+        # Subsample for speed if image is large
+        max_samples = 50000
+        if len(pixels) > max_samples:
+            indices = np.random.choice(len(pixels), max_samples, replace=False)
+            sample_pixels = pixels[indices]
+        else:
+            sample_pixels = pixels
+        
+        # K-means clustering
+        centroids, labels_sample = kmeans2(sample_pixels, n_colors, minit='points', iter=20)
+        
+        # Assign all pixels to nearest centroid
+        from scipy.spatial.distance import cdist
+        distances = cdist(pixels, centroids)
+        labels = np.argmin(distances, axis=1)
+        
+        # Convert centroids back to RGB
+        centroids_rgb = []
+        for c in centroids:
+            lab_pixel = c.reshape(1, 1, 3)
+            rgb_pixel = lab2rgb(lab_pixel)
+            rgb_values = (rgb_pixel[0, 0] * 255).clip(0, 255).astype(np.uint8)
+            centroids_rgb.append(rgb_values.tolist())
+        
+        # Create quantized image
+        quantized_lab = centroids[labels].reshape(h, w, 3)
+        quantized_rgb = lab2rgb(quantized_lab)
+        quantized = (quantized_rgb * 255).clip(0, 255).astype(np.uint8)
+        
+        return quantized, centroids_rgb
+        
+    except ImportError:
+        # Fallback to PIL quantization
+        return quantize_colors_pil(image_np, n_colors)
+
+
+def quantize_colors_pil(image_np, n_colors):
+    """Fallback color quantization using PIL."""
+    from PIL import Image
+    
+    pil_img = Image.fromarray(image_np)
+    quantized = pil_img.quantize(colors=n_colors, method=Image.Quantize.MEDIANCUT)
+    
+    palette = quantized.getpalette()
+    colors = []
+    for i in range(n_colors):
+        colors.append([palette[i*3], palette[i*3+1], palette[i*3+2]])
+    
+    return np.array(quantized.convert('RGB')), colors
+
+
+def create_color_mask(quantized, color_rgb, tolerance=10):
+    """Create a binary mask for pixels matching the given color."""
+    color = np.array(color_rgb, dtype=np.int16)
+    diff = np.abs(quantized.astype(np.int16) - color)
+    return np.all(diff <= tolerance, axis=2)
+
+
+def find_contours(binary_mask):
+    """
+    Find contours in a binary mask.
+    Returns list of contour arrays, each (N, 2) with (x, y) coordinates.
+    """
+    try:
+        from skimage.measure import find_contours as skimage_find_contours
+        
+        # skimage find_contours returns (row, col) format
+        mask_float = binary_mask.astype(np.float64)
+        raw_contours = skimage_find_contours(mask_float, level=0.5)
+        
+        # Convert from (row, col) to (x, y) and ensure integer coords
+        contours = []
+        for c in raw_contours:
+            if len(c) < 3:
+                continue
+            # Swap columns: (row, col) -> (x, y) = (col, row)
+            xy = np.column_stack([c[:, 1], c[:, 0]]).astype(np.int32)
+            contours.append(xy)
+        
+        return contours
+        
+    except ImportError:
+        # Fallback: use scipy labeling
+        from scipy import ndimage
+        
+        labeled, n_features = ndimage.label(binary_mask)
+        contours = []
+        
+        for i in range(1, n_features + 1):
+            region_mask = (labeled == i)
+            # Get boundary pixels
+            eroded = ndimage.binary_erosion(region_mask)
+            boundary = region_mask & ~eroded
+            coords = np.argwhere(boundary)
+            if len(coords) >= 3:
+                # Convert (row, col) to (x, y)
+                xy = np.column_stack([coords[:, 1], coords[:, 0]])
+                contours.append(xy.astype(np.int32))
+        
+        return contours
+
+
+def polygon_area(contour):
+    """Calculate area of polygon using Shoelace formula."""
+    if len(contour) < 3:
+        return 0.0
+    
+    x = contour[:, 0].astype(np.float64)
+    y = contour[:, 1].astype(np.float64)
+    
+    return 0.5 * abs(np.sum(x[:-1] * y[1:] - x[1:] * y[:-1]) + 
+                      x[-1] * y[0] - x[0] * y[-1])
+
+
+def polygon_perimeter(contour):
+    """Calculate perimeter of polygon."""
+    if len(contour) < 2:
+        return 0.0
+    
+    diffs = np.diff(contour, axis=0)
+    segment_lengths = np.sqrt(np.sum(diffs ** 2, axis=1))
+    
+    # Add closing segment
+    closing = np.sqrt(np.sum((contour[-1] - contour[0]) ** 2))
+    
+    return float(np.sum(segment_lengths) + closing)
+
+
+def simplify_polygon(contour, tolerance=1.5):
+    """
+    Simplify polygon using Douglas-Peucker algorithm.
+    """
+    try:
+        from skimage.measure import approximate_polygon
+        simplified = approximate_polygon(contour, tolerance=tolerance)
+        return simplified.astype(np.int32)
+    except ImportError:
+        # Basic simplification: keep every Nth point
+        if len(contour) <= 10:
+            return contour
+        step = max(1, len(contour) // 50)
+        return contour[::step].astype(np.int32)
+
+
+def classify_region(area_mm2, perimeter_mm, contours):
+    """
+    Classify a region as fill, outline, or detail based on its properties.
+    """
+    if area_mm2 <= 0 or perimeter_mm <= 0:
+        return 'detail'
+    
+    compactness = (4 * np.pi * area_mm2) / (perimeter_mm ** 2)
+    
+    # Calculate aspect ratio from bounding box
+    all_points = np.vstack(contours)
+    x_range = all_points[:, 0].max() - all_points[:, 0].min()
+    y_range = all_points[:, 1].max() - all_points[:, 1].min()
+    
+    if min(x_range, y_range) == 0:
+        aspect_ratio = 100
+    else:
+        aspect_ratio = max(x_range, y_range) / min(x_range, y_range)
+    
+    # Classification logic
+    if compactness < 0.1 or aspect_ratio > 8:
+        return 'outline'  # Thin stroke
+    elif area_mm2 < 5.0:
+        return 'detail'   # Small element
+    else:
+        return 'fill'     # Large area
+
+
+def compute_principal_angle(points):
+    """
+    Compute the principal axis angle of a set of points.
+    Returns angle in degrees (0-180).
+    """
+    if len(points) < 3:
+        return 0.0
+    
+    # Center points
+    centroid = points.mean(axis=0)
+    centered = points - centroid
+    
+    # Covariance matrix
+    cov = np.cov(centered.T)
+    
+    if cov.shape != (2, 2):
+        return 0.0
+    
+    # Eigenvalues and eigenvectors
+    eigenvalues, eigenvectors = np.linalg.eigh(cov)
+    
+    # Principal axis is the eigenvector with larger eigenvalue
+    principal = eigenvectors[:, np.argmax(eigenvalues)]
+    
+    # Angle in degrees
+    angle = np.degrees(np.arctan2(principal[1], principal[0]))
+    
+    # Normalize to 0-180
+    return float(angle % 180)

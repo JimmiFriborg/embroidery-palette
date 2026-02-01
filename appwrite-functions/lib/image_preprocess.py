@@ -1,367 +1,270 @@
 """
-Image Preprocessing Module for PP1 Embroidery
+Image Preprocessing Module for Embroidery Digitizing
+Handles image cleanup, background removal, and sizing for PP1 hoop.
 
-Stage 1 of the digitizing pipeline:
-- Bilateral filtering (noise removal, edge preservation)
-- Background removal (GrabCut with threshold fallback)
-- Safe area calculation and enforcement
-- Aspect-ratio-preserving resize
-
-Optimized for Brother PP1 hobbyist embroidery machine.
+Uses scikit-image + PIL + numpy (no OpenCV dependency).
 """
 
 import numpy as np
-from dataclasses import dataclass
-from typing import Tuple, Optional
-
-# Try to import OpenCV, fall back gracefully
-try:
-    import cv2
-    HAS_OPENCV = True
-except ImportError:
-    HAS_OPENCV = False
-
-from PIL import Image
+from PIL import Image, ImageFilter
 
 
-# Hoop specifications (in mm)
+# PP1 hoop specifications
 HOOP_SPECS = {
     '100x100': {
-        'size_mm': (100, 100),
-        'safe_area_mm': (90, 90),  # 5mm margin on each side
-        'margin_mm': 5.0,
+        'width_mm': 100,
+        'height_mm': 100,
+        'safe_width_mm': 90,  # 5mm margin each side
+        'safe_height_mm': 90,
     },
     '70x70': {
-        'size_mm': (70, 70),
-        'safe_area_mm': (62, 62),  # ~4mm margin
-        'margin_mm': 4.0,
-    },
+        'width_mm': 70,
+        'height_mm': 70,
+        'safe_width_mm': 62,
+        'safe_height_mm': 62,
+    }
 }
 
-# Default pixels per mm (at 10px/mm, 100mm = 1000px)
-DEFAULT_PX_PER_MM = 10.0
+# Default DPI for mm conversion (10 pixels per mm)
+DEFAULT_PX_PER_MM = 10
 
 
-@dataclass
-class PreprocessResult:
-    """Result of image preprocessing."""
-    image: np.ndarray          # Cleaned RGB image
-    mask: np.ndarray           # Alpha mask (foreground)
-    safe_area_mm: Tuple[float, float]
-    hoop_size: str
-    pixels_per_mm: float
-    original_size: Tuple[int, int]
-    final_size: Tuple[int, int]
-    background_removed: bool
-    method_used: str
-
-
-def preprocess_for_embroidery(
-    image_np: np.ndarray,
-    hoop_size: str = '100x100',
-    safe_margin_mm: float = 5.0,
-    use_grabcut: bool = True,
-    bilateral_d: int = 9,
-    bilateral_sigma_color: float = 75,
-    bilateral_sigma_space: float = 75,
-) -> PreprocessResult:
+def preprocess_for_embroidery(image_np, hoop_size='100x100', use_grabcut=True):
     """
-    Main preprocessing entry point.
-    
-    Prepares an image for embroidery digitizing:
-    1. Apply bilateral filter (smooth while preserving edges)
-    2. Remove background (GrabCut or threshold)
-    3. Crop to content
-    4. Resize to safe area within hoop
-    5. Center in hoop
+    Full preprocessing pipeline for embroidery conversion.
     
     Args:
-        image_np: Input RGB image as numpy array
-        hoop_size: Target hoop ('100x100' or '70x70')
-        safe_margin_mm: Margin from hoop edge in mm
-        use_grabcut: Try GrabCut for background removal
-        bilateral_*: Bilateral filter parameters
-        
+        image_np: RGB numpy array (H, W, 3)
+        hoop_size: '100x100' or '70x70'
+        use_grabcut: Whether to attempt advanced background removal
+    
     Returns:
-        PreprocessResult with cleaned image, mask, and metadata
+        preprocessed: Cleaned RGB numpy array
+        alpha_mask: Binary mask (255=foreground, 0=background)
+        dimensions: Dict with size info in mm
     """
-    if hoop_size not in HOOP_SPECS:
-        hoop_size = '100x100'
+    spec = HOOP_SPECS.get(hoop_size, HOOP_SPECS['100x100'])
     
-    spec = HOOP_SPECS[hoop_size]
-    original_size = (image_np.shape[1], image_np.shape[0])
+    # Stage 1: Denoise
+    denoised = denoise_bilateral(image_np)
     
-    # Step 1: Bilateral filtering (noise reduction, edge preservation)
-    filtered = apply_bilateral_filter(
-        image_np, bilateral_d, bilateral_sigma_color, bilateral_sigma_space
-    )
-    
-    # Step 2: Background removal
-    if use_grabcut and HAS_OPENCV:
-        fg_image, mask, method = remove_background_grabcut(filtered)
+    # Stage 2: Background removal
+    if use_grabcut:
+        try:
+            fg_mask = remove_background_threshold(denoised)
+        except Exception:
+            fg_mask = np.ones(denoised.shape[:2], dtype=np.uint8) * 255
     else:
-        fg_image, mask, method = remove_background_threshold(filtered)
+        fg_mask = np.ones(denoised.shape[:2], dtype=np.uint8) * 255
     
-    background_removed = np.any(mask == 0)
+    # Stage 3: Clean up mask with morphological operations
+    fg_mask = clean_mask(fg_mask)
     
-    # Step 3: Crop to content (non-transparent region)
-    cropped_image, cropped_mask = crop_to_content(fg_image, mask)
+    # Stage 4: Crop to content
+    cropped, cropped_mask = crop_to_content(denoised, fg_mask)
     
-    # Step 4: Resize to safe area
-    safe_area_mm = (
-        spec['size_mm'][0] - 2 * safe_margin_mm,
-        spec['size_mm'][1] - 2 * safe_margin_mm,
+    # Stage 5: Resize to safe area
+    safe_w_px = spec['safe_width_mm'] * DEFAULT_PX_PER_MM
+    safe_h_px = spec['safe_height_mm'] * DEFAULT_PX_PER_MM
+    
+    resized, resized_mask = resize_preserve_aspect(
+        cropped, cropped_mask, safe_w_px, safe_h_px
     )
     
-    resized_image, resized_mask, px_per_mm = resize_to_safe_area(
-        cropped_image, cropped_mask, safe_area_mm
+    # Stage 6: Center in hoop
+    hoop_w_px = spec['width_mm'] * DEFAULT_PX_PER_MM
+    hoop_h_px = spec['height_mm'] * DEFAULT_PX_PER_MM
+    
+    centered, centered_mask = center_in_canvas(
+        resized, resized_mask, hoop_w_px, hoop_h_px
     )
     
-    # Step 5: Center in hoop (add padding to full hoop size)
-    hoop_px = (
-        int(spec['size_mm'][0] * px_per_mm),
-        int(spec['size_mm'][1] * px_per_mm),
-    )
+    # Calculate actual dimensions
+    actual_h, actual_w = resized.shape[:2]
+    dimensions = {
+        'width_mm': actual_w / DEFAULT_PX_PER_MM,
+        'height_mm': actual_h / DEFAULT_PX_PER_MM,
+        'safe_width_mm': spec['safe_width_mm'],
+        'safe_height_mm': spec['safe_height_mm'],
+        'hoop_width_mm': spec['width_mm'],
+        'hoop_height_mm': spec['height_mm'],
+        'px_per_mm': DEFAULT_PX_PER_MM,
+    }
     
-    final_image, final_mask = center_in_hoop(
-        resized_image, resized_mask, hoop_px
-    )
-    
-    return PreprocessResult(
-        image=final_image,
-        mask=final_mask,
-        safe_area_mm=safe_area_mm,
-        hoop_size=hoop_size,
-        pixels_per_mm=px_per_mm,
-        original_size=original_size,
-        final_size=(final_image.shape[1], final_image.shape[0]),
-        background_removed=background_removed,
-        method_used=method,
-    )
+    return centered, centered_mask, dimensions
 
 
-def apply_bilateral_filter(
-    image: np.ndarray,
-    d: int = 9,
-    sigma_color: float = 75,
-    sigma_space: float = 75,
-) -> np.ndarray:
+def denoise_bilateral(image_np, sigma_color=0.05, sigma_spatial=10):
     """
-    Apply bilateral filter to smooth while preserving edges.
-    
-    This is critical for embroidery: we want smooth regions
-    but sharp boundaries between colors.
+    Bilateral-like denoising using PIL's edge-preserving smooth filter.
+    Preserves edges while reducing noise.
     """
-    if HAS_OPENCV:
-        return cv2.bilateralFilter(image, d, sigma_color, sigma_space)
-    else:
-        # Fallback: no filtering (PIL doesn't have bilateral)
-        return image
-
-
-def remove_background_grabcut(
-    image: np.ndarray,
-    iterations: int = 5,
-    margin_ratio: float = 0.05,
-) -> Tuple[np.ndarray, np.ndarray, str]:
-    """
-    Remove background using GrabCut algorithm.
-    
-    GrabCut iteratively segments foreground/background based on
-    initial rectangle hint. Good for images with clear subjects.
-    
-    Returns: (foreground_image, mask, method_name)
-    """
-    if not HAS_OPENCV:
-        return remove_background_threshold(image)
-    
-    h, w = image.shape[:2]
-    
-    # Initial rectangle: slightly inset from image edges
-    margin_x = int(w * margin_ratio)
-    margin_y = int(h * margin_ratio)
-    rect = (margin_x, margin_y, w - 2 * margin_x, h - 2 * margin_y)
-    
-    # Initialize mask and models
-    mask = np.zeros((h, w), np.uint8)
-    bgd_model = np.zeros((1, 65), np.float64)
-    fgd_model = np.zeros((1, 65), np.float64)
-    
     try:
-        cv2.grabCut(
-            image, mask, rect,
-            bgd_model, fgd_model,
-            iterations, cv2.GC_INIT_WITH_RECT
+        from skimage.restoration import denoise_bilateral as skimage_bilateral
+        # skimage bilateral works on float images [0,1]
+        img_float = image_np.astype(np.float64) / 255.0
+        denoised = skimage_bilateral(
+            img_float,
+            sigma_color=sigma_color,
+            sigma_spatial=sigma_spatial,
+            channel_axis=-1
         )
+        return (denoised * 255).clip(0, 255).astype(np.uint8)
+    except ImportError:
+        # Fallback to PIL smooth filter
+        pil_img = Image.fromarray(image_np)
+        smoothed = pil_img.filter(ImageFilter.SMOOTH_MORE)
+        return np.array(smoothed)
+
+
+def remove_background_threshold(image_np):
+    """
+    Background removal using edge detection + flood fill approach.
+    Works without OpenCV's GrabCut.
+    """
+    try:
+        from skimage.filters import sobel
+        from skimage.color import rgb2gray
+        from scipy import ndimage
         
-        # Create binary mask (foreground = 1 or 3)
-        binary_mask = np.where(
-            (mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 255, 0
-        ).astype(np.uint8)
+        gray = rgb2gray(image_np)  # Returns float [0, 1]
         
-        # Apply mask to image (set background to white)
-        result = image.copy()
-        result[binary_mask == 0] = [255, 255, 255]
+        # Edge detection
+        edges = sobel(gray)
         
-        return result, binary_mask, 'grabcut'
+        # Create binary mask from edges
+        threshold = np.mean(edges) + np.std(edges)
+        edge_mask = edges > threshold
         
-    except Exception:
-        # Fall back to threshold if GrabCut fails
-        return remove_background_threshold(image)
+        # Dilate edges to close gaps
+        struct = ndimage.generate_binary_structure(2, 2)
+        closed_edges = ndimage.binary_dilation(edge_mask, struct, iterations=3)
+        closed_edges = ndimage.binary_closing(closed_edges, struct, iterations=2)
+        
+        # Fill holes to get foreground
+        filled = ndimage.binary_fill_holes(closed_edges)
+        
+        # If the filled region is too small or too large, use center-based approach
+        fill_ratio = np.sum(filled) / filled.size
+        if fill_ratio < 0.05 or fill_ratio > 0.95:
+            # Fallback: assume center is foreground, edges are background
+            h, w = gray.shape
+            center_mask = np.zeros_like(gray, dtype=bool)
+            margin = min(h, w) // 10
+            center_mask[margin:h-margin, margin:w-margin] = True
+            
+            # Use luminance threshold
+            mean_center = np.mean(gray[center_mask])
+            mean_border = np.mean(np.concatenate([
+                gray[0, :], gray[-1, :], gray[:, 0], gray[:, -1]
+            ]))
+            
+            if mean_center < mean_border:
+                # Dark subject on light background
+                fg_mask = gray < (mean_border - 0.1)
+            else:
+                # Light subject on dark background
+                fg_mask = gray > (mean_border + 0.1)
+            
+            fg_mask = ndimage.binary_fill_holes(fg_mask)
+            fg_mask = ndimage.binary_closing(fg_mask, struct, iterations=3)
+            filled = fg_mask
+        
+        return (filled.astype(np.uint8) * 255)
+        
+    except ImportError:
+        # Ultimate fallback: no background removal
+        return np.ones(image_np.shape[:2], dtype=np.uint8) * 255
 
 
-def remove_background_threshold(
-    image: np.ndarray,
-    bg_threshold: int = 240,
-) -> Tuple[np.ndarray, np.ndarray, str]:
-    """
-    Simple threshold-based background removal.
-    
-    Assumes near-white background (common for embroidery source images).
-    Fast fallback when GrabCut isn't available or fails.
-    
-    Returns: (foreground_image, mask, method_name)
-    """
-    # Convert to grayscale for thresholding
-    if len(image.shape) == 3:
-        gray = np.mean(image, axis=2).astype(np.uint8)
-    else:
-        gray = image
-    
-    # Threshold: background is very bright
-    mask = np.where(gray < bg_threshold, 255, 0).astype(np.uint8)
-    
-    # Clean up mask with morphological operations
-    if HAS_OPENCV:
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-    
-    # Apply mask (background → white)
-    result = image.copy()
-    result[mask == 0] = [255, 255, 255]
-    
-    return result, mask, 'threshold'
+def clean_mask(mask, close_size=5, open_size=3):
+    """Clean binary mask with morphological operations."""
+    try:
+        from skimage.morphology import disk, closing, opening
+        
+        binary = mask > 127
+        # Close small gaps
+        binary = closing(binary, disk(close_size))
+        # Remove small noise
+        binary = opening(binary, disk(open_size))
+        
+        return (binary.astype(np.uint8) * 255)
+    except ImportError:
+        from scipy import ndimage
+        binary = mask > 127
+        struct = np.ones((close_size, close_size))
+        binary = ndimage.binary_closing(binary, struct)
+        binary = ndimage.binary_opening(binary, np.ones((open_size, open_size)))
+        return (binary.astype(np.uint8) * 255)
 
 
-def crop_to_content(
-    image: np.ndarray,
-    mask: np.ndarray,
-    padding_px: int = 10,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Crop image and mask to bounding box of content.
+def crop_to_content(image_np, mask):
+    """Crop image and mask to the bounding box of the mask content."""
+    coords = np.argwhere(mask > 127)
     
-    Removes empty margins to focus on actual design.
-    """
-    # Find content bounds
-    if HAS_OPENCV:
-        coords = cv2.findNonZero(mask)
-        if coords is None:
-            return image, mask
-        x, y, w, h = cv2.boundingRect(coords)
-    else:
-        rows = np.any(mask > 0, axis=1)
-        cols = np.any(mask > 0, axis=0)
-        if not np.any(rows) or not np.any(cols):
-            return image, mask
-        y_min, y_max = np.where(rows)[0][[0, -1]]
-        x_min, x_max = np.where(cols)[0][[0, -1]]
-        x, y = x_min, y_min
-        w, h = x_max - x_min + 1, y_max - y_min + 1
+    if len(coords) == 0:
+        return image_np, mask
     
-    # Add padding (clamped to image bounds)
-    x1 = max(0, x - padding_px)
-    y1 = max(0, y - padding_px)
-    x2 = min(image.shape[1], x + w + padding_px)
-    y2 = min(image.shape[0], y + h + padding_px)
+    y_min, x_min = coords.min(axis=0)
+    y_max, x_max = coords.max(axis=0)
     
-    return image[y1:y2, x1:x2], mask[y1:y2, x1:x2]
+    # Add small padding
+    pad = 5
+    h, w = image_np.shape[:2]
+    y_min = max(0, y_min - pad)
+    x_min = max(0, x_min - pad)
+    y_max = min(h - 1, y_max + pad)
+    x_max = min(w - 1, x_max + pad)
+    
+    return image_np[y_min:y_max+1, x_min:x_max+1], mask[y_min:y_max+1, x_min:x_max+1]
 
 
-def resize_to_safe_area(
-    image: np.ndarray,
-    mask: np.ndarray,
-    safe_area_mm: Tuple[float, float],
-    target_px_per_mm: float = DEFAULT_PX_PER_MM,
-) -> Tuple[np.ndarray, np.ndarray, float]:
-    """
-    Resize image to fit within safe area, preserving aspect ratio.
+def resize_preserve_aspect(image_np, mask, max_w, max_h):
+    """Resize image preserving aspect ratio to fit within max dimensions."""
+    h, w = image_np.shape[:2]
     
-    Returns: (resized_image, resized_mask, actual_px_per_mm)
-    """
-    h, w = image.shape[:2]
-    safe_w_mm, safe_h_mm = safe_area_mm
+    if w == 0 or h == 0:
+        return image_np, mask
     
-    # Calculate target size in pixels
-    target_w_px = int(safe_w_mm * target_px_per_mm)
-    target_h_px = int(safe_h_mm * target_px_per_mm)
+    scale = min(max_w / w, max_h / h)
+    if scale >= 1.0:
+        return image_np, mask
     
-    # Preserve aspect ratio
-    scale = min(target_w_px / w, target_h_px / h)
-    new_w = int(w * scale)
-    new_h = int(h * scale)
+    new_w = max(1, int(w * scale))
+    new_h = max(1, int(h * scale))
     
-    # Resize
-    if HAS_OPENCV:
-        resized_img = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-        resized_mask = cv2.resize(mask, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
-    else:
-        pil_img = Image.fromarray(image)
-        resized_img = np.array(pil_img.resize((new_w, new_h), Image.LANCZOS))
-        pil_mask = Image.fromarray(mask)
-        resized_mask = np.array(pil_mask.resize((new_w, new_h), Image.NEAREST))
+    # Use PIL for high-quality resize
+    pil_img = Image.fromarray(image_np)
+    pil_img = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
     
-    # Calculate actual pixels per mm
-    actual_px_per_mm = new_w / (w / target_px_per_mm * scale / scale)
-    # Simplified: use target since we're scaling to fit
-    actual_px_per_mm = target_px_per_mm
+    pil_mask = Image.fromarray(mask)
+    pil_mask = pil_mask.resize((new_w, new_h), Image.Resampling.NEAREST)
     
-    return resized_img, resized_mask, actual_px_per_mm
+    return np.array(pil_img), np.array(pil_mask)
 
 
-def center_in_hoop(
-    image: np.ndarray,
-    mask: np.ndarray,
-    hoop_size_px: Tuple[int, int],
-    background_color: Tuple[int, int, int] = (255, 255, 255),
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Center image in full hoop canvas.
+def center_in_canvas(image_np, mask, canvas_w, canvas_h):
+    """Center image and mask in a white canvas of given size."""
+    h, w = image_np.shape[:2]
     
-    Creates a white background canvas of hoop size and places
-    the design centered within it.
-    """
-    h, w = image.shape[:2]
-    hoop_w, hoop_h = hoop_size_px
+    canvas = np.ones((canvas_h, canvas_w, 3), dtype=np.uint8) * 255
+    mask_canvas = np.zeros((canvas_h, canvas_w), dtype=np.uint8)
     
-    # Create white canvas
-    canvas = np.full((hoop_h, hoop_w, 3), background_color, dtype=np.uint8)
-    mask_canvas = np.zeros((hoop_h, hoop_w), dtype=np.uint8)
+    offset_x = (canvas_w - w) // 2
+    offset_y = (canvas_h - h) // 2
     
-    # Calculate position to center
-    x_offset = (hoop_w - w) // 2
-    y_offset = (hoop_h - h) // 2
+    # Clamp to canvas bounds
+    src_x1 = max(0, -offset_x)
+    src_y1 = max(0, -offset_y)
+    src_x2 = min(w, canvas_w - offset_x)
+    src_y2 = min(h, canvas_h - offset_y)
     
-    # Place image and mask
-    canvas[y_offset:y_offset+h, x_offset:x_offset+w] = image
-    mask_canvas[y_offset:y_offset+h, x_offset:x_offset+w] = mask
+    dst_x1 = max(0, offset_x)
+    dst_y1 = max(0, offset_y)
+    dst_x2 = dst_x1 + (src_x2 - src_x1)
+    dst_y2 = dst_y1 + (src_y2 - src_y1)
+    
+    canvas[dst_y1:dst_y2, dst_x1:dst_x2] = image_np[src_y1:src_y2, src_x1:src_x2]
+    mask_canvas[dst_y1:dst_y2, dst_x1:dst_x2] = mask[src_y1:src_y2, src_x1:src_x2]
     
     return canvas, mask_canvas
-
-
-def get_safe_area_for_hoop(hoop_size: str) -> Tuple[float, float]:
-    """Get safe embroidery area for a hoop size (in mm)."""
-    if hoop_size in HOOP_SPECS:
-        return HOOP_SPECS[hoop_size]['safe_area_mm']
-    return (90, 90)  # Default
-
-
-def mm_to_px(mm: float, px_per_mm: float = DEFAULT_PX_PER_MM) -> int:
-    """Convert millimeters to pixels."""
-    return int(mm * px_per_mm)
-
-
-def px_to_mm(px: int, px_per_mm: float = DEFAULT_PX_PER_MM) -> float:
-    """Convert pixels to millimeters."""
-    return px / px_per_mm

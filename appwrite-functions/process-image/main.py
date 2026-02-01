@@ -2,14 +2,7 @@
 Appwrite Python Function: Image Processing (Phase 2 Pipeline)
 Handles preprocessing, shape analysis, and region extraction for embroidery conversion.
 
-Deploy to Appwrite with:
-  appwrite functions create --functionId process-image --name "Process Image" --runtime python-3.11
-  appwrite functions createDeployment --functionId process-image --entrypoint main.py --code .
-
-Required environment variables in Appwrite:
-  - APPWRITE_ENDPOINT
-  - APPWRITE_PROJECT_ID
-  - APPWRITE_API_KEY
+Uses scikit-image + PIL + numpy (no OpenCV dependency).
 """
 
 import os
@@ -17,7 +10,7 @@ import io
 import json
 import sys
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 from appwrite.client import Client
 from appwrite.services.storage import Storage
 from appwrite.services.databases import Databases
@@ -35,12 +28,6 @@ except ImportError as e:
     PHASE2_AVAILABLE = False
     PHASE2_ERROR = str(e)
 
-# Try importing OpenCV
-try:
-    import cv2
-except ImportError:
-    cv2 = None
-
 
 def main(context):
     """
@@ -53,19 +40,8 @@ def main(context):
         "threadCount": 6,
         "hoopSize": "100x100"
     }
-    
-    Returns:
-    {
-        "success": true,
-        "processedImageId": "...",
-        "outlineImageId": "...",
-        "extractedColors": ["#FF0000", ...],
-        "colorCount": 6,
-        "regionData": {...}  // Shape analysis for stitch planning
-    }
     """
     try:
-        # Parse request
         payload = json.loads(context.req.body) if context.req.body else {}
         
         project_id = payload.get('projectId')
@@ -79,7 +55,6 @@ def main(context):
                 'error': 'Missing projectId or imageId'
             }, 400)
         
-        # Check Phase 2 modules availability
         if not PHASE2_AVAILABLE:
             context.log(f'Phase 2 modules not available: {PHASE2_ERROR}')
             context.log('Falling back to legacy processing...')
@@ -100,13 +75,11 @@ def main(context):
             file_id=image_id
         )
         
-        # Load image
         image = Image.open(io.BytesIO(file_data))
         image_np = np.array(image.convert('RGB'))
         
         context.log(f'Image loaded: {image_np.shape[1]}x{image_np.shape[0]} px')
         
-        # Use Phase 2 pipeline if available
         if PHASE2_AVAILABLE:
             result = process_with_phase2(
                 context, storage, databases, project_id,
@@ -131,14 +104,7 @@ def main(context):
 
 
 def process_with_phase2(context, storage, databases, project_id, image_np, thread_count, hoop_size):
-    """
-    Process image using Phase 2 digitizing pipeline.
-    
-    Pipeline stages:
-    1. Image Preprocessing (bilateral filter, background removal, safe area)
-    2. Color Quantization & Region Extraction
-    3. Shape Analysis (contours, classification)
-    """
+    """Process image using Phase 2 digitizing pipeline."""
     context.log('=== Using Phase 2 Digitizing Pipeline ===')
     
     # Stage 1: Preprocess image
@@ -150,7 +116,6 @@ def process_with_phase2(context, storage, databases, project_id, image_np, threa
     )
     
     context.log(f'  Preprocessed to {dimensions["width_mm"]:.1f}x{dimensions["height_mm"]:.1f}mm')
-    context.log(f'  Safe area: {dimensions["safe_width_mm"]}x{dimensions["safe_height_mm"]}mm')
     
     # Stage 2: Extract regions with color quantization
     context.log(f'Stage 2: Extracting {thread_count} color regions...')
@@ -158,12 +123,11 @@ def process_with_phase2(context, storage, databases, project_id, image_np, threa
         preprocessed,
         n_colors=thread_count,
         alpha_mask=alpha_mask,
-        min_area_mm2=2.0  # Filter tiny regions
+        min_area_mm2=2.0
     )
     
     context.log(f'  Found {len(regions)} regions')
     
-    # Count region types
     fill_count = sum(1 for r in regions if r.region_type == 'fill')
     outline_count = sum(1 for r in regions if r.region_type == 'outline')
     detail_count = sum(1 for r in regions if r.region_type == 'detail')
@@ -242,35 +206,40 @@ def process_with_phase2(context, storage, databases, project_id, image_np, threa
 
 
 def generate_outline_preview(quantized_image, regions):
-    """Generate a preview image showing extracted contours."""
-    if cv2 is None:
-        return None
-    
+    """Generate a preview image showing extracted contours using PIL."""
     h, w = quantized_image.shape[:2]
-    outline_image = np.ones((h, w, 3), dtype=np.uint8) * 255
     
-    # Draw contours for each region
+    outline_pil = Image.new('RGB', (w, h), (255, 255, 255))
+    draw = ImageDraw.Draw(outline_pil)
+    
     for region in regions:
-        # Use region color for contours
         color = hex_to_rgb(region.color)
-        bgr_color = (color[2], color[1], color[0])  # RGB to BGR for OpenCV
         
         for contour in region.contours:
+            if len(contour) < 2:
+                continue
+            
+            # Convert contour to list of tuples for PIL
+            points = [(int(p[0]), int(p[1])) for p in contour]
+            
             if region.region_type == 'fill':
-                # Thick line for fill regions
-                cv2.drawContours(outline_image, [contour], -1, bgr_color, 2)
+                width = 2
             elif region.region_type == 'outline':
-                # Medium line for outlines
-                cv2.drawContours(outline_image, [contour], -1, bgr_color, 1)
+                width = 1
             else:
-                # Thin dashed for details (draw as dots)
-                cv2.drawContours(outline_image, [contour], -1, bgr_color, 1)
+                width = 1
+            
+            # Draw polygon outline
+            if len(points) >= 3:
+                draw.polygon(points, outline=color, width=width)
+            else:
+                draw.line(points, fill=color, width=width)
     
-    return outline_image
+    return np.array(outline_pil)
 
 
 def serialize_regions(regions):
-    """Convert Region objects to JSON-serializable format for stitch planning."""
+    """Convert Region objects to JSON-serializable format."""
     return {
         'regions': [
             {
@@ -295,24 +264,14 @@ def serialize_regions(regions):
 
 
 def process_legacy(context, storage, databases, project_id, image_np, thread_count, hoop_size):
-    """
-    Legacy processing fallback when Phase 2 modules aren't available.
-    """
-    context.log('Using legacy processing (Phase 2 modules not available)')
+    """Legacy processing fallback using PIL only."""
+    context.log('Using legacy processing...')
     
-    # Step 1: Remove background
-    context.log('Removing background...')
-    processed_np = remove_background_simple(image_np)
-    
-    # Step 2: Extract clean outlines
-    context.log('Extracting outlines...')
-    outline_image, contours = extract_clean_outlines(processed_np)
-    
-    # Step 3: Quantize colors
+    # Quantize colors using PIL
     context.log(f'Quantizing to {thread_count} colors...')
-    quantized_np, colors = quantize_colors(processed_np, thread_count)
+    quantized_np, colors = quantize_colors_pil(image_np, thread_count)
     
-    # Step 4: Resize for hoop with safe area
+    # Resize for hoop
     context.log(f'Sizing for {hoop_size} hoop...')
     final_np = resize_for_hoop(quantized_np, hoop_size)
     
@@ -322,7 +281,6 @@ def process_legacy(context, storage, databases, project_id, image_np, thread_cou
     processed_image.save(buffer, format='PNG')
     buffer.seek(0)
     
-    # Upload processed image
     context.log('Uploading processed image...')
     processed_file = storage.create_file(
         bucket_id='project_images',
@@ -330,166 +288,33 @@ def process_legacy(context, storage, databases, project_id, image_np, thread_cou
         file=InputFile.from_bytes(buffer.read(), f'{project_id}_processed.png')
     )
     
-    # Upload outline image if generated
-    outline_file_id = None
-    if outline_image is not None:
-        outline_pil = Image.fromarray(outline_image)
-        outline_buffer = io.BytesIO()
-        outline_pil.save(outline_buffer, format='PNG')
-        outline_buffer.seek(0)
-        outline_file = storage.create_file(
-            bucket_id='project_images',
-            file_id='unique()',
-            file=InputFile.from_bytes(outline_buffer.read(), f'{project_id}_outlines.png')
-        )
-        outline_file_id = outline_file['$id']
-    
-    # Convert colors to hex
     color_hex_list = [rgb_to_hex(c) for c in colors]
     
-    # Update project document
     context.log('Updating project...')
-    update_data = {
-        'processedImageId': processed_file['$id'],
-        'status': 'ready',
-        'extractedColors': color_hex_list
-    }
-    if outline_file_id:
-        update_data['outlineImageId'] = outline_file_id
-        update_data['contourCount'] = len(contours)
-    
     databases.update_document(
         database_id='newstitchdb',
         collection_id='projects',
         document_id=project_id,
-        data=update_data
+        data={
+            'processedImageId': processed_file['$id'],
+            'status': 'ready',
+            'extractedColors': color_hex_list
+        }
     )
     
     return {
         'success': True,
         'processedImageId': processed_file['$id'],
-        'outlineImageId': outline_file_id,
+        'outlineImageId': None,
         'extractedColors': color_hex_list,
         'colorCount': len(colors),
-        'contourCount': len(contours) if contours else 0,
+        'contourCount': 0,
         'pipeline': 'legacy'
     }
 
 
-# ============================================================================
-# Legacy helper functions (used as fallback)
-# ============================================================================
-
-def remove_background_simple(image_np):
-    """Background removal using GrabCut with edge-based fallback."""
-    if cv2 is None:
-        return image_np
-    
-    h, w = image_np.shape[:2]
-    
-    try:
-        mask = np.zeros((h, w), np.uint8)
-        bgd_model = np.zeros((1, 65), np.float64)
-        fgd_model = np.zeros((1, 65), np.float64)
-        
-        margin_x, margin_y = int(w * 0.1), int(h * 0.1)
-        rect = (margin_x, margin_y, w - 2 * margin_x, h - 2 * margin_y)
-        
-        cv2.grabCut(image_np, mask, rect, bgd_model, fgd_model, 5, cv2.GC_INIT_WITH_RECT)
-        
-        mask2 = np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8')
-        result = image_np.copy()
-        result[mask2 == 0] = [255, 255, 255]
-        return result
-        
-    except Exception:
-        gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        edges = cv2.Canny(blurred, 50, 150)
-        
-        kernel = np.ones((3, 3), np.uint8)
-        dilated = cv2.dilate(edges, kernel, iterations=2)
-        contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        if not contours:
-            return image_np
-        
-        mask = np.zeros(gray.shape, dtype=np.uint8)
-        largest_contour = max(contours, key=cv2.contourArea)
-        cv2.drawContours(mask, [largest_contour], -1, 255, -1)
-        
-        result = image_np.copy()
-        result[mask == 0] = [255, 255, 255]
-        return result
-
-
-def extract_clean_outlines(image_np, simplify_epsilon=2.0):
-    """Extract embroidery-friendly outlines using Canny + contour simplification."""
-    if cv2 is None:
-        return None, []
-    
-    h, w = image_np.shape[:2]
-    gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
-    filtered = cv2.bilateralFilter(gray, 9, 75, 75)
-    
-    median_val = np.median(filtered)
-    lower = int(max(0, 0.66 * median_val))
-    upper = int(min(255, 1.33 * median_val))
-    
-    edges = cv2.Canny(filtered, lower, upper)
-    kernel = np.ones((3, 3), np.uint8)
-    edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
-    
-    contours, _ = cv2.findContours(edges, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    
-    if not contours:
-        return None, []
-    
-    min_contour_length = min(h, w) * 0.05
-    simplified_contours = []
-    
-    for contour in contours:
-        arc_length = cv2.arcLength(contour, True)
-        if arc_length < min_contour_length:
-            continue
-        
-        area = cv2.contourArea(contour)
-        if area < (min_contour_length ** 2) * 0.1:
-            continue
-        
-        epsilon = simplify_epsilon * 0.01 * arc_length
-        simplified = cv2.approxPolyDP(contour, epsilon, True)
-        
-        if len(simplified) >= 4:
-            simplified_contours.append(simplified)
-    
-    outline_image = np.ones((h, w, 3), dtype=np.uint8) * 255
-    cv2.drawContours(outline_image, simplified_contours, -1, (0, 0, 0), 2)
-    
-    return outline_image, simplified_contours
-
-
-def quantize_colors(image_np, n_colors):
-    """Reduce image to n_colors using K-means in LAB color space."""
-    if cv2 is None:
-        return quantize_colors_pil(image_np, n_colors)
-    
-    lab_pixels = cv2.cvtColor(image_np, cv2.COLOR_RGB2LAB).reshape(-1, 3).astype(np.float32)
-    
-    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.2)
-    _, labels, centers = cv2.kmeans(lab_pixels, n_colors, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
-    
-    centers_lab = centers.reshape(1, -1, 3).astype(np.uint8)
-    centers_rgb = cv2.cvtColor(centers_lab, cv2.COLOR_LAB2RGB).reshape(-1, 3)
-    
-    quantized = centers_rgb[labels.flatten()]
-    quantized_image = quantized.reshape(image_np.shape).astype(np.uint8)
-    
-    return quantized_image, centers_rgb.tolist()
-
-
 def quantize_colors_pil(image_np, n_colors):
-    """Fallback color quantization using PIL."""
+    """Color quantization using PIL."""
     image = Image.fromarray(image_np)
     quantized = image.quantize(colors=n_colors, method=Image.Quantize.MEDIANCUT)
     
@@ -503,14 +328,8 @@ def quantize_colors_pil(image_np, n_colors):
 
 def resize_for_hoop(image_np, hoop_size):
     """Resize image to fit within hoop safe area."""
-    safe_areas = {
-        '100x100': (900, 900),
-        '70x70': (620, 620)
-    }
-    full_sizes = {
-        '100x100': (1000, 1000),
-        '70x70': (700, 700)
-    }
+    safe_areas = {'100x100': (900, 900), '70x70': (620, 620)}
+    full_sizes = {'100x100': (1000, 1000), '70x70': (700, 700)}
     
     safe_size = safe_areas.get(hoop_size, (900, 900))
     full_size = full_sizes.get(hoop_size, (1000, 1000))
@@ -526,11 +345,9 @@ def resize_for_hoop(image_np, hoop_size):
 
 
 def rgb_to_hex(rgb):
-    """Convert RGB list to hex string."""
     return '#{:02x}{:02x}{:02x}'.format(int(rgb[0]), int(rgb[1]), int(rgb[2]))
 
 
 def hex_to_rgb(hex_color):
-    """Convert hex string to RGB tuple."""
     hex_color = hex_color.lstrip('#')
     return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))

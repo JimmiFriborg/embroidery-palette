@@ -1,7 +1,8 @@
 # Appwrite Function: process-image
-# Install these dependencies
+# All packages have pre-built musl wheels (no compilation needed)
 
 appwrite>=4.0.0
 numpy>=1.24.0
 Pillow>=10.0.0
-opencv-python-headless>=4.8.0
+scikit-image>=0.22.0
+scipy>=1.11.0
