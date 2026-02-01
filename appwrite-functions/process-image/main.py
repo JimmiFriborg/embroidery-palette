@@ -230,7 +230,7 @@ def process_with_phase2(context, storage, databases, project_id, image_np, threa
         'success': True,
         'processedImageId': processed_file['$id'],
         'outlineImageId': outline_file_id,
-        'extractedColors': json.dumps(color_hex_list),
+        'extractedColors': color_hex_list,
         'colorCount': len(color_palette),
         'contourCount': sum(len(r.contours) for r in regions),
         'regionData': region_data,
@@ -340,7 +340,7 @@ def process_legacy(context, storage, databases, project_id, image_np, thread_cou
         'success': True,
         'processedImageId': processed_file['$id'],
         'outlineImageId': None,
-        'extractedColors': json.dumps(color_hex_list),
+        'extractedColors': color_hex_list,
         'colorCount': len(colors),
         'contourCount': 0,
         'pipeline': 'legacy'
