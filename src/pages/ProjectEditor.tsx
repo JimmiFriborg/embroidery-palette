@@ -49,6 +49,7 @@ export default function ProjectEditor() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [regionSummary, setRegionSummary] = useState<{ total_area_mm2?: number; total_regions?: number } | null>(null);
+  const [processingStep, setProcessingStep] = useState(0);
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [lastStitchStats, setLastStitchStats] = useState<StitchStats | null>(null);
   const [showOutlineView, setShowOutlineView] = useState(false);
@@ -82,6 +83,25 @@ export default function ProjectEditor() {
       fetchProject();
     }
   }, [id]);
+
+  // Fun processing messages
+  const PROCESS_STEPS = [
+    'Waking the thread elves…',
+    'Removing background fluff…',
+    'Quantizing colors…',
+    'Finding shapes…',
+    'Planning stitches…',
+    'Polishing preview…'
+  ];
+
+  useEffect(() => {
+    if (!isProcessing) return;
+    setProcessingStep(0);
+    const interval = setInterval(() => {
+      setProcessingStep((prev) => (prev + 1) % PROCESS_STEPS.length);
+    }, 1800);
+    return () => clearInterval(interval);
+  }, [isProcessing]);
 
   const fetchProject = async () => {
     if (!id) return;
@@ -129,6 +149,21 @@ export default function ProjectEditor() {
         // Generate placeholder color mappings for demo
         const demoColors = generateDemoColors(projectData.threadCount);
         setColorMappings(demoColors);
+      }
+
+      // Load region summary from stored metadata if available
+      if (projectData.regionMetadata) {
+        try {
+          const meta = JSON.parse(projectData.regionMetadata);
+          if (meta?.summary) {
+            setRegionSummary({
+              total_area_mm2: meta.summary.total_area_mm2,
+              total_regions: meta.summary.total_regions,
+            });
+          }
+        } catch (e) {
+          console.warn('Failed to parse regionMetadata', e);
+        }
       }
     } catch (error) {
       console.error('Failed to fetch project:', error);
@@ -356,6 +391,19 @@ export default function ProjectEditor() {
 
   return (
     <div className="min-h-screen bg-gradient-soft pb-20">
+      {/* Processing Overlay */}
+      {isProcessing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-background rounded-2xl shadow-soft p-6 w-[85%] max-w-sm text-center">
+            <div className="text-lg font-semibold mb-2">Processing your design</div>
+            <div className="text-sm text-muted-foreground mb-4">{PROCESS_STEPS[processingStep]}</div>
+            <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+              <div className="h-2 bg-primary animate-pulse" style={{ width: `${((processingStep + 1) / PROCESS_STEPS.length) * 100}%` }} />
+            </div>
+            <div className="text-xs text-muted-foreground mt-3">Please wait… this can take a bit ⏳</div>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <header className="sticky top-0 z-50 bg-background/80 backdrop-blur-sm border-b border-border">
         <div className="container flex items-center justify-between h-14 px-4">
