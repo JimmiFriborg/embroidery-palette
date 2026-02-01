@@ -42,12 +42,46 @@ def main(context):
     }
     """
     try:
-        payload = json.loads(context.req.body) if context.req.body else {}
+        # Parse request body - try all Appwrite 1.8 body accessors
+        payload = {}
         
-        project_id = payload.get('projectId')
-        image_id = payload.get('imageId')
-        thread_count = payload.get('threadCount', 6)
-        hoop_size = payload.get('hoopSize', '100x100')
+        # Try body_text first (Appwrite 1.8 snake_case), then bodyText, then body
+        for attr in ['body_text', 'bodyText', 'body_raw', 'bodyRaw', 'body']:
+            try:
+                val = getattr(context.req, attr, None)
+                if val and isinstance(val, str) and val.strip():
+                    payload = json.loads(val)
+                    context.log(f"Parsed payload from {attr}")
+                    break
+            except Exception:
+                continue
+        
+        # Try body_json / bodyJson (already parsed dict)
+        if not payload:
+            for attr in ['body_json', 'bodyJson']:
+                try:
+                    val = getattr(context.req, attr, None)
+                    if val and isinstance(val, dict):
+                        payload = val
+                        context.log(f"Parsed payload from {attr}")
+                        break
+                except Exception:
+                    continue
+        
+        # Unwrap { data: "..." } wrapper if present
+        if isinstance(payload, dict) and 'data' in payload and isinstance(payload['data'], str):
+            try:
+                payload = json.loads(payload['data'])
+                context.log("Unwrapped data wrapper")
+            except Exception:
+                pass
+        
+        context.log(f"Payload: {json.dumps(payload) if isinstance(payload, dict) else str(payload)}")
+        
+        project_id = payload.get('projectId') if isinstance(payload, dict) else None
+        image_id = payload.get('imageId') if isinstance(payload, dict) else None
+        thread_count = payload.get('threadCount', 6) if isinstance(payload, dict) else 6
+        hoop_size = payload.get('hoopSize', '100x100') if isinstance(payload, dict) else '100x100'
         
         if not project_id or not image_id:
             return context.res.json({

@@ -113,9 +113,19 @@ export default function NewProject() {
           selectedImage
         );
         originalImageId = uploadedFile.$id;
-      } catch (storageError) {
-        console.log('Storage bucket may not exist yet:', storageError);
-        // Continue without image storage for now
+      } catch (storageError: any) {
+        console.error('Image upload failed:', storageError);
+        const errorMessage =
+          storageError?.message ||
+          storageError?.response?.message ||
+          'Image upload failed. Please check storage bucket permissions.';
+        toast({
+          title: 'Image upload failed',
+          description: errorMessage,
+          variant: 'destructive',
+        });
+        setIsCreating(false);
+        return; // Stop here so we don’t create a project without an image
       }
 
       // Create project document

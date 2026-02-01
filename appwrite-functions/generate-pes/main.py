@@ -87,14 +87,40 @@ def main(context):
         }, 500)
     
     try:
-        # Parse request
-        payload = json.loads(context.req.body) if context.req.body else {}
+        # Parse request body - try all Appwrite 1.8 body accessors
+        payload = {}
+        for attr in ['body_text', 'bodyText', 'body_raw', 'bodyRaw', 'body']:
+            try:
+                val = getattr(context.req, attr, None)
+                if val and isinstance(val, str) and val.strip():
+                    payload = json.loads(val)
+                    context.log(f"Parsed payload from {attr}")
+                    break
+            except Exception:
+                continue
+        if not payload:
+            for attr in ['body_json', 'bodyJson']:
+                try:
+                    val = getattr(context.req, attr, None)
+                    if val and isinstance(val, dict):
+                        payload = val
+                        context.log(f"Parsed payload from {attr}")
+                        break
+                except Exception:
+                    continue
         
-        project_id = payload.get('projectId')
-        color_mappings = payload.get('colorMappings', [])
-        hoop_size = payload.get('hoopSize', '100x100')
-        quality_preset = payload.get('qualityPreset', 'balanced')
-        density_override = payload.get('density')
+        # Unwrap { data: "..." } wrapper if present
+        if isinstance(payload, dict) and 'data' in payload and isinstance(payload['data'], str):
+            try:
+                payload = json.loads(payload['data'])
+            except Exception:
+                pass
+        
+        project_id = payload.get('projectId') if isinstance(payload, dict) else None
+        color_mappings = payload.get('colorMappings', []) if isinstance(payload, dict) else []
+        hoop_size = payload.get('hoopSize', '100x100') if isinstance(payload, dict) else '100x100'
+        quality_preset = payload.get('qualityPreset', 'balanced') if isinstance(payload, dict) else 'balanced'
+        density_override = payload.get('density') if isinstance(payload, dict) else None
         
         if not project_id:
             return context.res.json({

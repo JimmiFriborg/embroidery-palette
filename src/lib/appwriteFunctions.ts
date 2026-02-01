@@ -1,8 +1,12 @@
-import { ID } from 'appwrite';
+import { ID, Functions } from 'appwrite';
+import client from './appwrite';
 
-// Appwrite function endpoints
+// Appwrite function endpoints (fallback for direct calls)
 const APPWRITE_ENDPOINT = import.meta.env.VITE_APPWRITE_ENDPOINT || 'https://cloud.appwrite.io/v1';
 const APPWRITE_PROJECT_ID = import.meta.env.VITE_APPWRITE_PROJECT_ID || '';
+
+// Appwrite SDK Functions client
+const functions = new Functions(client);
 
 interface ProcessImagePayload {
   projectId: string;
@@ -70,34 +74,28 @@ interface GeneratePesResponse {
 }
 
 /**
- * Execute an Appwrite function
+ * Execute an Appwrite function using the SDK
  */
 async function executeFunction<T>(functionId: string, data: object): Promise<T> {
-  const response = await fetch(`${APPWRITE_ENDPOINT}/functions/${functionId}/executions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Appwrite-Project': APPWRITE_PROJECT_ID,
-    },
-    body: JSON.stringify({
-      data: JSON.stringify(data),
-      async: false,
-    }),
-  });
+  const execution = await functions.createExecution(
+    functionId,
+    JSON.stringify(data),  // body
+    false,                 // async
+    '/',                   // path
+    'POST',               // method
+    { 'Content-Type': 'application/json' }  // headers
+  );
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Function execution failed: ${errorText}`);
+  if (execution.responseStatusCode >= 400) {
+    throw new Error(execution.responseBody || `Function returned status ${execution.responseStatusCode}`);
   }
 
-  const result = await response.json();
-  
   // Parse the function response
-  if (result.responseBody) {
-    return JSON.parse(result.responseBody);
+  if (execution.responseBody) {
+    return JSON.parse(execution.responseBody);
   }
-  
-  return result;
+
+  return execution as unknown as T;
 }
 
 /**
