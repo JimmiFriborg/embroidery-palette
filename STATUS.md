@@ -1,33 +1,27 @@
 # Embroidery Palette — Deployment Status
-*Last updated: 2026-02-01 18:35*
+*Last updated: 2026-02-01 19:20*
 
 ## Phase A: Deploy Frontend ⏳
-- [x] Created Appwrite site `embroidery-palette` (ID: embroidery-palette)
+- [x] Created Appwrite site `embroidery-palette`
 - [x] Set build env vars (VITE_APPWRITE_ENDPOINT, VITE_APPWRITE_PROJECT_ID)
-- [x] Built and deployed dist (status: ready, deployment: 697f8280941e2b8f6c1b)
-- [ ] **BLOCKED — needs Jimmi:** Assign domain in Appwrite Console
-  - Go to Console → Project → Sites → `embroidery-palette` → Custom Domains
-  - Add `embroidery-palette.sites.friborg.uk` (or `stitch.friborg.uk` if switching)
-  - API key lacks `rules.write` scope for proxy rule creation
+- [x] Built and deployed dist (status: ready)
+- [ ] **BLOCKED — needs Jimmi:** Domain rule in Appwrite Console
+  - Site exists but `embroidery-palette.sites.friborg.uk` shows "rule_not_found"
+  - Need to assign domain via Console → Sites → embroidery-palette → Custom Domains
 
-## Phase B: Deploy Backend Functions 🔄
+## Phase B: Deploy Backend Functions ✅
 - [x] Updated `process-image` to python-3.11, timeout 120s
-- [x] Updated `generate-pes` to python-3.11, timeout 120s
-- [x] Verified env vars set (APPWRITE_ENDPOINT, PROJECT_ID, API_KEY)
-- [x] Packaged functions with shared lib/ modules
-- [ ] **IN PROGRESS:** process-image building (OpenCV compiling from source ~10-20min)
-  - Deployment: 697f8e0fbe1e55938f8c
-- [ ] **QUEUED:** generate-pes waiting for build slot
-  - Deployment: 697f8e151be7c4bd87eb
+- [x] Updated `generate-pes` to python-3.11, timeout 120s  
+- [x] Env vars verified (APPWRITE_ENDPOINT, PROJECT_ID, API_KEY)
+- [x] Replaced OpenCV with scikit-image (musl-compatible, builds in 40s vs 15min timeout)
+- [x] **process-image deployed** — ready (43s build, 107MB)
+- [x] **generate-pes deployed** — ready (35s build, 107MB)
+- [x] Code pushed to GitHub
 
 ## Phase C: End-to-End Testing
-- [ ] Test upload → process → color map → export
-- [ ] Validate PES output with pyembroidery
+- [ ] Test upload → process → color map → export (needs frontend domain)
 
 ## Phase D: PES Viewer
-- [ ] In-browser PES display (canvas/SVG stitch rendering)
-- [ ] Import existing .pes files
+- [ ] In-browser PES display
 
-## Phase E: ReSpira Integration (Future - after proven export)
-- [ ] Study BLE protocol from jhbruhn/respira
-- [ ] WebBluetooth integration
+## Phase E: ReSpira Integration (deferred)

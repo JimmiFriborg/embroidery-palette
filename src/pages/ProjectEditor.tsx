@@ -12,6 +12,8 @@ import { ThreadPicker } from '@/components/ThreadPicker';
 import { ExportDialog, type QualityPreset } from '@/components/ExportDialog';
 import { useToast } from '@/hooks/use-toast';
 import { useSwipeGesture } from '@/hooks/useSwipeGesture';
+import { StitchPreview } from '@/components/StitchPreview';
+import { parsePes, type PesPattern } from '@/lib/pesParser';
 import { 
   ArrowLeft, 
   Image as ImageIcon,
@@ -48,6 +50,7 @@ export default function ProjectEditor() {
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [lastStitchStats, setLastStitchStats] = useState<StitchStats | null>(null);
   const [showOutlineView, setShowOutlineView] = useState(false);
+  const [pesPattern, setPesPattern] = useState<PesPattern | null>(null);
 
   // Swipe gesture for tab navigation
   const TABS = ['original', 'colors', 'preview'] as const;
@@ -472,13 +475,13 @@ export default function ProjectEditor() {
           {/* Preview Tab */}
           <TabsContent value="preview" className="mt-0 space-y-4">
             {/* Image Toggle Buttons */}
-            {(processedImageUrl || outlineImageUrl) && (
-              <div className="flex gap-2">
+            {(processedImageUrl || outlineImageUrl || pesPattern) && (
+              <div className="flex gap-2 flex-wrap">
                 <Button
-                  variant={!showOutlineView ? 'default' : 'outline'}
+                  variant={!showOutlineView && !pesPattern ? 'default' : 'outline'}
                   size="sm"
-                  onClick={() => setShowOutlineView(false)}
-                  className={!showOutlineView ? 'bg-gradient-warm' : ''}
+                  onClick={() => { setShowOutlineView(false); }}
+                  className={!showOutlineView && !pesPattern ? 'bg-gradient-warm' : ''}
                 >
                   <Layers className="h-4 w-4 mr-1.5" />
                   Colors
@@ -496,70 +499,56 @@ export default function ProjectEditor() {
               </div>
             )}
 
+            {/* Stitch Preview Component */}
+            <StitchPreview
+              pattern={pesPattern}
+              processedImageUrl={showOutlineView ? outlineImageUrl : processedImageUrl}
+              hoopSize={project?.hoopSize || '100x100'}
+              colorMappings={colorMappings.map(m => ({
+                originalColor: m.originalColor,
+                threadColor: m.threadColor,
+                threadName: m.threadName,
+              }))}
+              allowUpload={true}
+              width={380}
+              height={380}
+              onPatternLoaded={(p) => setPesPattern(p)}
+            />
+
+            {/* Stitch Info */}
             <Card className="border-0 shadow-soft">
               <CardContent className="p-4">
-                {/* Main Preview Image */}
-                {previewImageUrl && !showOutlineView ? (
-                  <img
-                    src={previewImageUrl}
-                    alt="Stitch Preview"
-                    className="w-full max-h-[50vh] object-contain rounded-lg bg-white"
-                  />
-                ) : showOutlineView && outlineImageUrl ? (
-                  <div className="relative">
-                    <img
-                      src={outlineImageUrl}
-                      alt="Outline Preview"
-                      className="w-full max-h-[50vh] object-contain rounded-lg bg-white"
-                    />
-                    <div className="absolute top-2 right-2 px-2 py-1 rounded bg-background/80 backdrop-blur-sm text-xs font-medium">
-                      Contours: {project?.contourCount || '--'}
-                    </div>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <span className="text-muted-foreground">Hoop Size</span>
+                    <p className="font-semibold">{project?.hoopSize === '100x100' ? '100×100mm' : '70×70mm'}</p>
                   </div>
-                ) : processedImageUrl ? (
-                  <img
-                    src={processedImageUrl}
-                    alt="Processed Preview"
-                    className="w-full max-h-[50vh] object-contain rounded-lg bg-white"
-                  />
-                ) : (
-                  <div className="aspect-square flex flex-col items-center justify-center bg-muted rounded-lg border-2 border-dashed border-muted-foreground/25">
-                    <Eye className="h-12 w-12 text-muted-foreground mb-2" />
-                    <p className="text-sm text-muted-foreground font-medium">Stitch Preview</p>
-                    <p className="text-xs text-muted-foreground mt-1 text-center px-4">
-                      Process your image first to see the preview
-                    </p>
+                  <div>
+                    <span className="text-muted-foreground">Thread Colors</span>
+                    <p className="font-semibold">{colorMappings.length || project?.threadCount || '--'}</p>
                   </div>
-                )}
-
-                {/* Stitch Info */}
-                <div className="mt-4 p-3 rounded-lg bg-secondary/50">
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <span className="text-muted-foreground">Hoop Size</span>
-                      <p className="font-semibold">{project?.hoopSize === '100x100' ? '100×100mm' : '70×70mm'}</p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Thread Colors</span>
-                      <p className="font-semibold">{colorMappings.length || project?.threadCount || '--'}</p>
-                    </div>
-                    {lastStitchStats && (
-                      <>
-                        <div>
-                          <span className="text-muted-foreground">Stitch Count</span>
-                          <p className="font-semibold">{lastStitchStats.stitch_count?.toLocaleString() || '--'}</p>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">Sew Time</span>
-                          <p className="font-semibold">
-                            {lastStitchStats.estimated_time_minutes 
-                              ? `~${Math.round(lastStitchStats.estimated_time_minutes)} min` 
+                  {(lastStitchStats || pesPattern) && (
+                    <>
+                      <div>
+                        <span className="text-muted-foreground">Stitch Count</span>
+                        <p className="font-semibold">
+                          {pesPattern
+                            ? pesPattern.totalStitches.toLocaleString()
+                            : lastStitchStats?.stitch_count?.toLocaleString() || '--'}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Sew Time</span>
+                        <p className="font-semibold">
+                          {pesPattern
+                            ? `~${Math.round(pesPattern.totalStitches / 400)} min`
+                            : lastStitchStats?.estimated_time_minutes
+                              ? `~${Math.round(lastStitchStats.estimated_time_minutes)} min`
                               : '--'}
-                          </p>
-                        </div>
-                      </>
-                    )}
-                  </div>
+                        </p>
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 {/* Download button if PES is ready */}
