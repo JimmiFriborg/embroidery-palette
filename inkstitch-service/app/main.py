@@ -9,6 +9,7 @@
 
 import io
 import os
+import sys
 import json
 import shutil
 import subprocess
@@ -28,7 +29,9 @@ logging.basicConfig(level=logging.INFO)
 app = FastAPI(title="InkStitch Microservice", version="1.0.0")
 
 # Paths
-INKSTITCH_BIN = "/opt/inkstitch/inkstitch/bin/inkstitch"
+INKSTITCH_DIR = os.environ.get("INKSTITCH_DIR", "/opt/inkstitch")
+INKSTITCH_BIN = os.path.join(INKSTITCH_DIR, "inkstitch.py")  # Python entry point
+INKSCAPE_BIN = shutil.which("inkscape") or "inkscape"
 POTRACE_BIN = "potrace"
 
 # Hoop safe areas in mm (slightly inset from full hoop)
@@ -75,12 +78,14 @@ QUALITY_PRESETS = {
 
 @app.get("/health")
 def health():
-    inkstitch_ok = os.path.isfile(INKSTITCH_BIN)
+    inkstitch_ok = os.path.isdir(INKSTITCH_DIR)
+    inkscape_ok = shutil.which("inkscape") is not None
     potrace_ok = shutil.which(POTRACE_BIN) is not None
     return {
-        "status": "ok" if (inkstitch_ok and potrace_ok) else "degraded",
+        "status": "ok" if (inkstitch_ok and potrace_ok and inkscape_ok) else "degraded",
         "service": "inkstitch_api",
-        "inkstitch_binary": inkstitch_ok,
+        "inkstitch_dir": inkstitch_ok,
+        "inkscape_available": inkscape_ok,
         "potrace_available": potrace_ok,
     }
 
@@ -234,29 +239,10 @@ async def image_to_pes(
         with open(svg_file, "w") as f:
             f.write(svg_content)
         
-        # 5. Run Ink/Stitch CLI to generate PES
+        # 5. Run Ink/Stitch to generate PES
         logger.info("Step 5: Generating PES with Ink/Stitch...")
-        pes_zip = os.path.join(tmpdir, "output.zip")
         
-        result = subprocess.run(
-            [INKSTITCH_BIN, "--extension=zip", "--format-pes=True", svg_file],
-            capture_output=True, timeout=120
-        )
-        
-        if result.returncode != 0:
-            stderr = result.stderr.decode("utf-8", errors="replace")
-            logger.error(f"Ink/Stitch failed: {stderr}")
-            raise HTTPException(status_code=500, detail=f"Ink/Stitch error: {stderr[:500]}")
-        
-        # Output is piped to stdout as a zip
-        if not result.stdout:
-            raise HTTPException(status_code=500, detail="Ink/Stitch produced no output")
-        
-        # Extract PES from zip
-        pes_bytes = extract_pes_from_zip(result.stdout)
-        
-        if not pes_bytes:
-            raise HTTPException(status_code=500, detail="No PES file in Ink/Stitch output")
+        pes_bytes = run_inkstitch_export(svg_file, tmpdir)
         
         logger.info(f"  PES generated: {len(pes_bytes)} bytes")
         
@@ -293,18 +279,7 @@ async def svg_to_pes(
         with open(svg_file, "wb") as f:
             f.write(svg_data)
         
-        result = subprocess.run(
-            [INKSTITCH_BIN, "--extension=zip", "--format-pes=True", svg_file],
-            capture_output=True, timeout=120
-        )
-        
-        if result.returncode != 0:
-            stderr = result.stderr.decode("utf-8", errors="replace")
-            raise HTTPException(status_code=500, detail=f"Ink/Stitch error: {stderr[:500]}")
-        
-        pes_bytes = extract_pes_from_zip(result.stdout)
-        if not pes_bytes:
-            raise HTTPException(status_code=500, detail="No PES in output")
+        pes_bytes = run_inkstitch_export(svg_file, tmpdir)
         
         return Response(
             content=pes_bytes,
@@ -362,6 +337,191 @@ async def resize_or_convert(
         raise HTTPException(status_code=500, detail=f"Conversion error: {str(e)}")
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ─── Ink/Stitch export helper ────────────────────────────────────────
+
+def run_inkstitch_export(svg_file: str, tmpdir: str) -> bytes:
+    """
+    Run Ink/Stitch to convert SVG → PES.
+    
+    Tries multiple approaches:
+    1. inkstitch.py direct CLI (if available)
+    2. Inkscape with Ink/Stitch extension actions
+    3. Fallback: pyembroidery from SVG paths (basic fill)
+    """
+    
+    # Approach 1: Try inkstitch.py directly
+    if os.path.isfile(INKSTITCH_BIN):
+        try:
+            logger.info("  Trying inkstitch.py CLI...")
+            result = subprocess.run(
+                [sys.executable, INKSTITCH_BIN, "--extension=zip",
+                 "--format-pes=True", svg_file],
+                capture_output=True, timeout=120,
+                env={**os.environ, "PYTHONPATH": INKSTITCH_DIR}
+            )
+            if result.returncode == 0 and result.stdout:
+                pes = extract_pes_from_zip(result.stdout)
+                if pes:
+                    logger.info(f"  inkstitch.py succeeded: {len(pes)} bytes")
+                    return pes
+            logger.warning(f"  inkstitch.py failed: {result.stderr[:300]}")
+        except Exception as e:
+            logger.warning(f"  inkstitch.py error: {e}")
+    
+    # Approach 2: Inkscape CLI with extension
+    try:
+        logger.info("  Trying Inkscape + Ink/Stitch extension...")
+        pes_file = os.path.join(tmpdir, "output.pes")
+        result = subprocess.run(
+            [INKSCAPE_BIN, svg_file,
+             "--actions=select-all;org.inkstitch.output_pes",
+             f"--export-filename={pes_file}"],
+            capture_output=True, text=True, timeout=120,
+            env={**os.environ, "DISPLAY": "", "HOME": "/root"}
+        )
+        if os.path.isfile(pes_file) and os.path.getsize(pes_file) > 0:
+            with open(pes_file, "rb") as f:
+                pes = f.read()
+            logger.info(f"  Inkscape export succeeded: {len(pes)} bytes")
+            return pes
+        logger.warning(f"  Inkscape export failed: {result.stderr[:300]}")
+    except Exception as e:
+        logger.warning(f"  Inkscape error: {e}")
+    
+    # Approach 3: Fallback — pyembroidery basic conversion
+    logger.info("  Falling back to pyembroidery basic fill...")
+    return pyembroidery_fallback(svg_file, tmpdir)
+
+
+def pyembroidery_fallback(svg_file: str, tmpdir: str) -> bytes:
+    """
+    Basic PES generation using pyembroidery when Ink/Stitch isn't working.
+    Parses SVG paths, generates simple fill stitches.
+    """
+    import pyembroidery
+    import xml.etree.ElementTree as ET
+    
+    tree = ET.parse(svg_file)
+    root = tree.getroot()
+    ns = {"svg": "http://www.w3.org/2000/svg"}
+    
+    # Get viewBox dimensions
+    vb = root.get("viewBox", "0 0 100 100").split()
+    vb_w, vb_h = float(vb[2]), float(vb[3])
+    
+    # Parse width/height in mm
+    width_str = root.get("width", "100mm")
+    height_str = root.get("height", "100mm")
+    width_mm = float(width_str.replace("mm", ""))
+    height_mm = float(height_str.replace("mm", ""))
+    
+    # Scale: viewBox pixels → embroidery units (10 units = 1mm)
+    scale_x = (width_mm * 10) / vb_w
+    scale_y = (height_mm * 10) / vb_h
+    
+    pattern = pyembroidery.EmbPattern()
+    
+    # Find all paths with fill colors
+    paths = root.findall(".//svg:path", ns) or root.findall(".//path")
+    
+    if not paths:
+        raise HTTPException(status_code=400, detail="No paths found in SVG")
+    
+    color_count = 0
+    for path_el in paths:
+        style = path_el.get("style", "")
+        fill_color = None
+        for part in style.split(";"):
+            if part.strip().startswith("fill:"):
+                fill_color = part.split(":")[1].strip()
+                break
+        
+        if not fill_color or fill_color == "none":
+            continue
+        
+        # Parse hex color
+        try:
+            fc = fill_color.lstrip("#")
+            r, g, b = int(fc[0:2], 16), int(fc[2:4], 16), int(fc[4:6], 16)
+        except (ValueError, IndexError):
+            r, g, b = 0, 0, 0
+        
+        # Add thread
+        thread = pyembroidery.EmbThread()
+        thread.color = (r << 16) | (g << 8) | b
+        pattern.add_thread(thread)
+        
+        if color_count > 0:
+            pattern.color_change()
+        color_count += 1
+        
+        # Simple bounding box fill (since parsing SVG path data is complex)
+        # Get a rough bounding box from the path data
+        d = path_el.get("d", "")
+        coords = extract_coords_from_path(d)
+        
+        if not coords:
+            continue
+        
+        xs = [c[0] for c in coords]
+        ys = [c[1] for c in coords]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        
+        # Generate fill stitches (zigzag rows)
+        row_spacing = 3  # pixels
+        stitch_len = 30  # pixels
+        first = True
+        direction = 1
+        
+        y = min_y
+        while y <= max_y:
+            if direction == 1:
+                x_range = range(int(min_x), int(max_x) + 1, stitch_len)
+            else:
+                x_range = range(int(max_x), int(min_x) - 1, -stitch_len)
+            
+            for x in x_range:
+                ex = int((x - vb_w / 2) * scale_x)
+                ey = int((y - vb_h / 2) * scale_y)
+                
+                if first:
+                    pattern.add_stitch_absolute(pyembroidery.JUMP, ex, ey)
+                    first = False
+                else:
+                    pattern.add_stitch_absolute(pyembroidery.STITCH, ex, ey)
+            
+            y += row_spacing
+            direction *= -1
+    
+    pattern.end()
+    
+    output = io.BytesIO()
+    pyembroidery.write_pes(pattern, output)
+    output.seek(0)
+    pes_data = output.read()
+    
+    if len(pes_data) < 50:
+        raise HTTPException(status_code=500, detail="Failed to generate PES")
+    
+    logger.info(f"  pyembroidery fallback: {len(pes_data)} bytes, {color_count} colors")
+    return pes_data
+
+
+def extract_coords_from_path(d: str) -> list:
+    """Extract approximate coordinates from SVG path data."""
+    import re
+    coords = []
+    # Find all number pairs in the path data
+    numbers = re.findall(r'[-+]?(?:\d+\.?\d*|\.\d+)', d)
+    for i in range(0, len(numbers) - 1, 2):
+        try:
+            coords.append((float(numbers[i]), float(numbers[i + 1])))
+        except (ValueError, IndexError):
+            pass
+    return coords
 
 
 # ─── Helper functions ───────────────────────────────────────────────

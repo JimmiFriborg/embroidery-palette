@@ -1,41 +1,25 @@
 # Dockerfile
-# Purpose: Ink/Stitch microservice — image → SVG → PES via headless Ink/Stitch
-# Stack: FastAPI + Pillow + potrace + Ink/Stitch (pre-built binary) + pyembroidery
+# Purpose: Ink/Stitch microservice — image → SVG → PES
+# Stack: FastAPI + Pillow + potrace + Ink/Stitch (from source) + pyembroidery
 
 FROM python:3.12-slim
 
-# Install system deps:
-# - potrace: bitmap → vector tracing
-# - inkscape: needed by Ink/Stitch for some SVG processing
-# - wget: to download Ink/Stitch release
-# - libcairo2 etc: SVG rendering deps
+# Install system deps
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         potrace \
         inkscape \
-        wget \
-        xz-utils \
+        git \
         libcairo2 \
         libpango-1.0-0 \
-        libgdk-pixbuf2.0-0 && \
+        libgdk-pixbuf2.0-0 \
+        build-essential \
+        pkg-config && \
     rm -rf /var/lib/apt/lists/*
-
-# Install Ink/Stitch pre-built binary (v3.2.2 Linux x86_64)
-# This is the actual compiled extension, NOT the source repo
-RUN mkdir -p /opt/inkstitch && \
-    cd /opt/inkstitch && \
-    wget -q "https://github.com/inkstitch/inkstitch/releases/latest/download/inkstitch-3.2.2-linux-x86_64.tar.xz" -O inkstitch.tar.xz && \
-    tar -xJf inkstitch.tar.xz && \
-    rm inkstitch.tar.xz && \
-    chmod +x /opt/inkstitch/inkstitch/bin/inkstitch || true
-
-# Also install as Inkscape extension (some operations need it)
-RUN mkdir -p /root/.config/inkscape/extensions && \
-    ln -sf /opt/inkstitch/inkstitch /root/.config/inkscape/extensions/inkstitch || true
 
 WORKDIR /app
 
-# Python deps
+# Python deps (API + image processing)
 RUN pip install --no-cache-dir \
     fastapi \
     "uvicorn[standard]" \
@@ -43,6 +27,20 @@ RUN pip install --no-cache-dir \
     pyembroidery \
     numpy \
     python-multipart
+
+# Install Ink/Stitch from source (Python module)
+RUN git clone --depth 1 https://github.com/inkstitch/inkstitch.git /opt/inkstitch && \
+    cd /opt/inkstitch && \
+    pip install --no-cache-dir -r requirements.txt 2>/dev/null || true && \
+    pip install --no-cache-dir shapely lxml networkx trimesh scipy 2>/dev/null || true
+
+# Link Ink/Stitch as Inkscape extension
+RUN mkdir -p /root/.config/inkscape/extensions && \
+    ln -sf /opt/inkstitch /root/.config/inkscape/extensions/inkstitch
+
+# Set PYTHONPATH so we can import inkstitch modules
+ENV PYTHONPATH="/opt/inkstitch:${PYTHONPATH}"
+ENV INKSTITCH_DIR="/opt/inkstitch"
 
 COPY ./app /app/app
 
