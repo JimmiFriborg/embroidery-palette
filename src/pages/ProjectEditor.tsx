@@ -576,23 +576,30 @@ export default function ProjectEditor() {
                       alt="Original"
                       className="w-full max-h-[50vh] object-contain rounded-lg bg-muted"
                     />
-                    <Button
-                      className="mt-4 w-full bg-gradient-warm"
-                      onClick={handleProcessImage}
-                      disabled={isProcessing}
-                    >
-                      {isProcessing ? (
-                        <>
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          Processing...
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className="h-4 w-4 mr-2" />
-                          Process Image
-                        </>
-                      )}
-                    </Button>
+                    {processedImageUrl ? (
+                      <div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
+                        <Sparkles className="h-4 w-4 text-primary" />
+                        <span>Processed • {colorMappings.length} colors extracted</span>
+                      </div>
+                    ) : (
+                      <Button
+                        className="mt-4 w-full bg-gradient-warm"
+                        onClick={handleProcessImage}
+                        disabled={isProcessing}
+                      >
+                        {isProcessing ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Processing...
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="h-4 w-4 mr-2" />
+                            Process Image
+                          </>
+                        )}
+                      </Button>
+                    )}
                   </div>
                 ) : (
                   <div className="aspect-square flex flex-col items-center justify-center bg-muted rounded-lg">
