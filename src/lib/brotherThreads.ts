@@ -1,5 +1,6 @@
 // Brother Embroidery Thread Database
-// Official Brother thread colors for the PP1 embroidery machine
+// Official Brother 61-color embroidery thread palette
+// Source: EduTech Wiki Brother Thread Chart
 
 export interface BrotherThread {
   number: string;
@@ -8,111 +9,165 @@ export interface BrotherThread {
   category: string;
 }
 
-// Brother Embroidery Thread palette (common colors for PP1)
 export const BROTHER_THREADS: BrotherThread[] = [
-  // Whites & Creams
-  { number: '001', name: 'White', hex: '#FFFFFF', category: 'Whites' },
-  { number: '002', name: 'Linen White', hex: '#FAF0E6', category: 'Whites' },
-  { number: '010', name: 'Cream', hex: '#FFFDD0', category: 'Whites' },
-  { number: '027', name: 'Ivory', hex: '#FFFFF0', category: 'Whites' },
-  
-  // Reds
-  { number: '030', name: 'Salmon Pink', hex: '#FA8072', category: 'Reds' },
-  { number: '032', name: 'Flesh Pink', hex: '#FFCBA4', category: 'Reds' },
-  { number: '058', name: 'Red Wine', hex: '#722F37', category: 'Reds' },
-  { number: '070', name: 'Deep Rose', hex: '#C76574', category: 'Reds' },
-  { number: '086', name: 'Light Rose', hex: '#FFB6C1', category: 'Reds' },
-  { number: '202', name: 'Red', hex: '#FF0000', category: 'Reds' },
-  { number: '206', name: 'Dark Red', hex: '#8B0000', category: 'Reds' },
-  { number: '207', name: 'Cherry Red', hex: '#DE3163', category: 'Reds' },
-  { number: '209', name: 'Crimson', hex: '#DC143C', category: 'Reds' },
-  { number: '800', name: 'Vermilion', hex: '#E34234', category: 'Reds' },
-  
-  // Oranges
-  { number: '126', name: 'Pumpkin', hex: '#FF7518', category: 'Oranges' },
-  { number: '205', name: 'Tangerine', hex: '#FF9966', category: 'Oranges' },
-  { number: '208', name: 'Orange', hex: '#FFA500', category: 'Oranges' },
-  { number: '214', name: 'Deep Orange', hex: '#FF4500', category: 'Oranges' },
-  { number: '308', name: 'Rust', hex: '#B7410E', category: 'Oranges' },
-  
-  // Yellows
-  { number: '205', name: 'Pale Yellow', hex: '#FFFFE0', category: 'Yellows' },
-  { number: '208', name: 'Lemon Yellow', hex: '#FFFACD', category: 'Yellows' },
-  { number: '209', name: 'Canary Yellow', hex: '#FFEF00', category: 'Yellows' },
-  { number: '214', name: 'Gold', hex: '#FFD700', category: 'Yellows' },
-  { number: '348', name: 'Amber', hex: '#FFBF00', category: 'Yellows' },
-  { number: '512', name: 'Bright Yellow', hex: '#FFFF00', category: 'Yellows' },
-  { number: '513', name: 'Sunflower', hex: '#FFDA03', category: 'Yellows' },
-  
+  // Reds & Pinks
+  { number: '800', name: 'Red', hex: '#ED171F', category: 'Reds & Pinks' },
+  { number: '085', name: 'Pink', hex: '#F993BC', category: 'Reds & Pinks' },
+  { number: '086', name: 'Deep Rose', hex: '#F64A8A', category: 'Reds & Pinks' },
+  { number: '124', name: 'Flesh Pink', hex: '#FDD9DE', category: 'Reds & Pinks' },
+  { number: '107', name: 'Dark Fuchsia', hex: '#C70156', category: 'Reds & Pinks' },
+  { number: '030', name: 'Vermillion', hex: '#FE370F', category: 'Reds & Pinks' },
+  { number: '807', name: 'Carmine', hex: '#F73866', category: 'Reds & Pinks' },
+  { number: '079', name: 'Salmon Pink', hex: '#FCBBC4', category: 'Reds & Pinks' },
+  { number: '333', name: 'Amber Red', hex: '#B54C64', category: 'Reds & Pinks' },
+
+  // Oranges & Yellows
+  { number: '202', name: 'Lemon Yellow', hex: '#F0F970', category: 'Oranges & Yellows' },
+  { number: '205', name: 'Yellow', hex: '#FFFF00', category: 'Oranges & Yellows' },
+  { number: '206', name: 'Harvest Gold', hex: '#FFD911', category: 'Oranges & Yellows' },
+  { number: '208', name: 'Orange', hex: '#FEBA35', category: 'Oranges & Yellows' },
+  { number: '126', name: 'Pumpkin', hex: '#FEB343', category: 'Oranges & Yellows' },
+  { number: '209', name: 'Tangerine', hex: '#FE9E32', category: 'Oranges & Yellows' },
+  { number: '010', name: 'Cream Brown', hex: '#FFFFB3', category: 'Oranges & Yellows' },
+  { number: '812', name: 'Cream Yellow', hex: '#FFF08D', category: 'Oranges & Yellows' },
+  { number: '214', name: 'Deep Gold', hex: '#E8A900', category: 'Oranges & Yellows' },
+
+  // Browns & Neutrals
+  { number: '348', name: 'Khaki', hex: '#D0A660', category: 'Browns & Neutrals' },
+  { number: '328', name: 'Brass', hex: '#BA9800', category: 'Browns & Neutrals' },
+  { number: '307', name: 'Linen', hex: '#FEE3C5', category: 'Browns & Neutrals' },
+  { number: '058', name: 'Dark Brown', hex: '#2A1301', category: 'Browns & Neutrals' },
+  { number: '337', name: 'Reddish Brown', hex: '#D15C00', category: 'Browns & Neutrals' },
+  { number: '339', name: 'Clay Brown', hex: '#D15400', category: 'Browns & Neutrals' },
+  { number: '843', name: 'Beige', hex: '#EFE3B9', category: 'Browns & Neutrals' },
+  { number: '399', name: 'Warm Gray', hex: '#D8CCC6', category: 'Browns & Neutrals' },
+  { number: '330', name: 'Russet Brown', hex: '#7D6F00', category: 'Browns & Neutrals' },
+  { number: '323', name: 'Light Brown', hex: '#B27624', category: 'Browns & Neutrals' },
+
   // Greens
-  { number: '027', name: 'Mint Green', hex: '#98FF98', category: 'Greens' },
-  { number: '206', name: 'Lime Green', hex: '#32CD32', category: 'Greens' },
-  { number: '208', name: 'Kelly Green', hex: '#4CBB17', category: 'Greens' },
-  { number: '232', name: 'Forest Green', hex: '#228B22', category: 'Greens' },
-  { number: '328', name: 'Sage', hex: '#9DC183', category: 'Greens' },
-  { number: '415', name: 'Olive', hex: '#808000', category: 'Greens' },
-  { number: '507', name: 'Moss Green', hex: '#8A9A5B', category: 'Greens' },
-  { number: '515', name: 'Emerald', hex: '#50C878', category: 'Greens' },
-  { number: '534', name: 'Teal', hex: '#008080', category: 'Greens' },
-  { number: '808', name: 'Dark Green', hex: '#006400', category: 'Greens' },
-  
+  { number: '542', name: 'Seacrest', hex: '#A8DDC4', category: 'Greens' },
+  { number: '502', name: 'Mint Green', hex: '#9ED67D', category: 'Greens' },
+  { number: '509', name: 'Leaf Green', hex: '#66BA49', category: 'Greens' },
+  { number: '519', name: 'Olive Green', hex: '#132B1A', category: 'Greens' },
+  { number: '517', name: 'Dark Olive', hex: '#435607', category: 'Greens' },
+  { number: '534', name: 'Teal Green', hex: '#008777', category: 'Greens' },
+  { number: '507', name: 'Emerald Green', hex: '#00673E', category: 'Greens' },
+  { number: '808', name: 'Deep Green', hex: '#003822', category: 'Greens' },
+  { number: '027', name: 'Fresh Green', hex: '#E3F35B', category: 'Greens' },
+  { number: '513', name: 'Lime Green', hex: '#70BC1F', category: 'Greens' },
+  { number: '515', name: 'Moss Green', hex: '#2F7E20', category: 'Greens' },
+
   // Blues
-  { number: '017', name: 'Light Blue', hex: '#ADD8E6', category: 'Blues' },
-  { number: '019', name: 'Sky Blue', hex: '#87CEEB', category: 'Blues' },
-  { number: '070', name: 'Baby Blue', hex: '#89CFF0', category: 'Blues' },
-  { number: '405', name: 'Powder Blue', hex: '#B0E0E6', category: 'Blues' },
-  { number: '406', name: 'Royal Blue', hex: '#4169E1', category: 'Blues' },
-  { number: '415', name: 'Navy', hex: '#000080', category: 'Blues' },
-  { number: '420', name: 'Deep Blue', hex: '#00008B', category: 'Blues' },
-  { number: '502', name: 'Cornflower', hex: '#6495ED', category: 'Blues' },
-  { number: '534', name: 'Electric Blue', hex: '#7DF9FF', category: 'Blues' },
-  { number: '612', name: 'Turquoise', hex: '#40E0D0', category: 'Blues' },
-  { number: '613', name: 'Aqua', hex: '#00FFFF', category: 'Blues' },
-  
+  { number: '405', name: 'Blue', hex: '#0A55A3', category: 'Blues' },
+  { number: '406', name: 'Ultra Marine', hex: '#0B3D91', category: 'Blues' },
+  { number: '017', name: 'Light Blue', hex: '#A8DEEB', category: 'Blues' },
+  { number: '019', name: 'Sky Blue', hex: '#2584BB', category: 'Blues' },
+  { number: '420', name: 'Electric Blue', hex: '#095BA6', category: 'Blues' },
+  { number: '415', name: 'Peacock Blue', hex: '#134A76', category: 'Blues' },
+  { number: '007', name: 'Prussian Blue', hex: '#0E1F7C', category: 'Blues' },
+  { number: '070', name: 'Cornflower Blue', hex: '#4B6BAF', category: 'Blues' },
+
   // Purples
-  { number: '030', name: 'Lavender', hex: '#E6E6FA', category: 'Purples' },
-  { number: '607', name: 'Light Purple', hex: '#DDA0DD', category: 'Purples' },
-  { number: '612', name: 'Violet', hex: '#8F00FF', category: 'Purples' },
-  { number: '614', name: 'Purple', hex: '#800080', category: 'Purples' },
-  { number: '620', name: 'Deep Purple', hex: '#301934', category: 'Purples' },
-  { number: '810', name: 'Magenta', hex: '#FF00FF', category: 'Purples' },
-  { number: '614', name: 'Plum', hex: '#DDA0DD', category: 'Purples' },
-  
-  // Pinks
-  { number: '085', name: 'Light Pink', hex: '#FFB6C1', category: 'Pinks' },
-  { number: '086', name: 'Pink', hex: '#FFC0CB', category: 'Pinks' },
-  { number: '124', name: 'Hot Pink', hex: '#FF69B4', category: 'Pinks' },
-  { number: '125', name: 'Fuchsia', hex: '#FF00FF', category: 'Pinks' },
-  { number: '131', name: 'Dusty Rose', hex: '#C4A4A4', category: 'Pinks' },
-  { number: '807', name: 'Coral', hex: '#FF7F50', category: 'Pinks' },
-  
-  // Browns
-  { number: '328', name: 'Beige', hex: '#F5F5DC', category: 'Browns' },
-  { number: '348', name: 'Tan', hex: '#D2B48C', category: 'Browns' },
-  { number: '457', name: 'Light Brown', hex: '#C4A484', category: 'Browns' },
-  { number: '459', name: 'Medium Brown', hex: '#8B4513', category: 'Browns' },
-  { number: '461', name: 'Dark Brown', hex: '#654321', category: 'Browns' },
-  { number: '476', name: 'Chocolate', hex: '#7B3F00', category: 'Browns' },
-  { number: '514', name: 'Espresso', hex: '#3C1414', category: 'Browns' },
-  
+  { number: '869', name: 'Royal Purple', hex: '#770176', category: 'Purples' },
+  { number: '620', name: 'Magenta', hex: '#913697', category: 'Purples' },
+  { number: '810', name: 'Light Lilac', hex: '#E49ACB', category: 'Purples' },
+  { number: '612', name: 'Lilac', hex: '#915FAC', category: 'Purples' },
+  { number: '613', name: 'Violet', hex: '#6A1C8A', category: 'Purples' },
+  { number: '614', name: 'Purple', hex: '#4E2990', category: 'Purples' },
+  { number: '804', name: 'Lavender', hex: '#B2AFD4', category: 'Purples' },
+  { number: '607', name: 'Wisteria Violet', hex: '#686AB0', category: 'Purples' },
+
   // Grays & Black
-  { number: '399', name: 'Light Gray', hex: '#D3D3D3', category: 'Grays' },
-  { number: '415', name: 'Medium Gray', hex: '#808080', category: 'Grays' },
-  { number: '418', name: 'Dark Gray', hex: '#A9A9A9', category: 'Grays' },
-  { number: '420', name: 'Charcoal', hex: '#36454F', category: 'Grays' },
-  { number: '900', name: 'Black', hex: '#000000', category: 'Grays' },
-  
-  // Metallics (if available on PP1)
-  { number: '990', name: 'Metallic Gold', hex: '#D4AF37', category: 'Metallics' },
-  { number: '991', name: 'Metallic Silver', hex: '#C0C0C0', category: 'Metallics' },
+  { number: '900', name: 'Black', hex: '#000000', category: 'Grays & Black' },
+  { number: '001', name: 'White', hex: '#F0F0F0', category: 'Grays & Black' },
+  { number: '704', name: 'Pewter', hex: '#4F5556', category: 'Grays & Black' },
+  { number: '707', name: 'Dark Gray', hex: '#293133', category: 'Grays & Black' },
+  { number: '005', name: 'Silver', hex: '#A8A8A8', category: 'Grays & Black' },
+  { number: '817', name: 'Gray', hex: '#878787', category: 'Grays & Black' },
 ];
 
-// Get thread categories
+// ---------------------------------------------------------------------------
+// sRGB → CIELAB conversion (inline, no dependencies)
+// ---------------------------------------------------------------------------
+
+function hexToRgb(hex: string): [number, number, number] {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  if (!result) return [0, 0, 0];
+  return [
+    parseInt(result[1], 16),
+    parseInt(result[2], 16),
+    parseInt(result[3], 16),
+  ];
+}
+
+/** Linearize an sRGB channel (0-255 → linear 0-1). */
+function srgbToLinear(c: number): number {
+  const s = c / 255;
+  return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+}
+
+/** Convert sRGB (0-255 each) to CIELAB [L, a, b]. */
+function rgbToLab(r: number, g: number, b: number): [number, number, number] {
+  // sRGB → linear RGB
+  const rl = srgbToLinear(r);
+  const gl = srgbToLinear(g);
+  const bl = srgbToLinear(b);
+
+  // Linear RGB → XYZ (D65 illuminant)
+  let x = 0.4124564 * rl + 0.3575761 * gl + 0.1804375 * bl;
+  let y = 0.2126729 * rl + 0.7151522 * gl + 0.0721750 * bl;
+  let z = 0.0193339 * rl + 0.1191920 * gl + 0.9503041 * bl;
+
+  // Normalize to D65 white point
+  x /= 0.95047;
+  y /= 1.0;
+  z /= 1.08883;
+
+  // XYZ → Lab
+  const epsilon = 0.008856;
+  const kappa = 903.3;
+
+  const fx = x > epsilon ? Math.cbrt(x) : (kappa * x + 16) / 116;
+  const fy = y > epsilon ? Math.cbrt(y) : (kappa * y + 16) / 116;
+  const fz = z > epsilon ? Math.cbrt(z) : (kappa * z + 16) / 116;
+
+  const L = 116 * fy - 16;
+  const a = 500 * (fx - fy);
+  const bVal = 200 * (fy - fz);
+
+  return [L, a, bVal];
+}
+
+/** CIE76 Delta-E distance between two Lab colors. */
+function deltaE(lab1: [number, number, number], lab2: [number, number, number]): number {
+  return Math.sqrt(
+    (lab1[0] - lab2[0]) ** 2 +
+    (lab1[1] - lab2[1]) ** 2 +
+    (lab1[2] - lab2[2]) ** 2
+  );
+}
+
+function hexToLab(hex: string): [number, number, number] {
+  const [r, g, b] = hexToRgb(hex);
+  return rgbToLab(r, g, b);
+}
+
+// Pre-compute Lab values for all threads for fast lookup
+const threadLabCache = new Map<string, [number, number, number]>();
+for (const thread of BROTHER_THREADS) {
+  threadLabCache.set(thread.number, hexToLab(thread.hex));
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/** Get all unique thread categories. */
 export const getThreadCategories = (): string[] => {
   return [...new Set(BROTHER_THREADS.map(t => t.category))];
 };
 
-// Search threads by name or number
+/** Search threads by name or number (case-insensitive). */
 export const searchThreads = (query: string): BrotherThread[] => {
   const lowerQuery = query.toLowerCase();
   return BROTHER_THREADS.filter(
@@ -120,46 +175,27 @@ export const searchThreads = (query: string): BrotherThread[] => {
   );
 };
 
-// Find closest thread to a given hex color
+/**
+ * Find the closest Brother thread to a given hex color using
+ * CIELAB Delta-E (CIE76) perceptual color distance.
+ */
 export const findClosestThread = (hex: string): BrotherThread => {
-  const targetRgb = hexToRgb(hex);
-  
+  const targetLab = hexToLab(hex);
+
   let closestThread = BROTHER_THREADS[0];
   let minDistance = Infinity;
-  
+
   for (const thread of BROTHER_THREADS) {
-    const threadRgb = hexToRgb(thread.hex);
-    const distance = colorDistance(targetRgb, threadRgb);
-    
-    if (distance < minDistance) {
-      minDistance = distance;
+    const threadLab = threadLabCache.get(thread.number)!;
+    const dist = deltaE(targetLab, threadLab);
+
+    if (dist < minDistance) {
+      minDistance = dist;
       closestThread = thread;
     }
   }
-  
+
   return closestThread;
 };
-
-// Convert hex to RGB
-function hexToRgb(hex: string): { r: number; g: number; b: number } {
-  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-  return result ? {
-    r: parseInt(result[1], 16),
-    g: parseInt(result[2], 16),
-    b: parseInt(result[3], 16)
-  } : { r: 0, g: 0, b: 0 };
-}
-
-// Calculate color distance (simple Euclidean in RGB space)
-function colorDistance(
-  c1: { r: number; g: number; b: number },
-  c2: { r: number; g: number; b: number }
-): number {
-  return Math.sqrt(
-    Math.pow(c1.r - c2.r, 2) +
-    Math.pow(c1.g - c2.g, 2) +
-    Math.pow(c1.b - c2.b, 2)
-  );
-}
 
 export default BROTHER_THREADS;

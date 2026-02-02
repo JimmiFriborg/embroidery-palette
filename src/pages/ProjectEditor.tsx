@@ -604,16 +604,25 @@ export default function ProjectEditor() {
               </div>
             )}
 
-            {/* Stitch Preview Component */}
+            {/* Image Preview (direct img tag for reliability) */}
+            {!pesPattern && (previewMode === 'processed' ? processedImageUrl : previewMode === 'outline' ? outlineImageUrl : originalImageUrl) && (
+              <div className="relative rounded-xl overflow-hidden border border-border bg-white">
+                <img
+                  src={previewMode === 'outline' ? outlineImageUrl! : previewMode === 'original' ? originalImageUrl! : processedImageUrl!}
+                  alt={`${previewMode} preview`}
+                  className="w-full h-auto max-h-[400px] object-contain"
+                  crossOrigin="anonymous"
+                />
+                <div className="absolute bottom-2 right-2 bg-black/50 text-white text-xs px-2 py-1 rounded">
+                  {project?.hoopSize === '100x100' ? '100×100mm' : '70×70mm'}
+                </div>
+              </div>
+            )}
+
+            {/* Stitch Preview Component (for PES pattern rendering + file upload) */}
             <StitchPreview
               pattern={pesPattern}
-              processedImageUrl={
-                previewMode === 'outline'
-                  ? outlineImageUrl
-                  : previewMode === 'original'
-                    ? originalImageUrl
-                    : processedImageUrl
-              }
+              processedImageUrl={pesPattern ? undefined : undefined}
               hoopSize={project?.hoopSize || '100x100'}
               colorMappings={colorMappings.map(m => ({
                 originalColor: m.originalColor,
@@ -624,7 +633,35 @@ export default function ProjectEditor() {
               width={380}
               height={380}
               onPatternLoaded={(p) => setPesPattern(p)}
+              compact={!pesPattern}
             />
+
+            {/* Color Mapping Summary */}
+            {colorMappings.length > 0 && (
+              <Card className="border-0 shadow-soft">
+                <CardContent className="p-4">
+                  <h3 className="text-sm font-semibold mb-3">Thread Colors</h3>
+                  <div className="flex flex-wrap gap-2">
+                    {colorMappings.filter(m => !m.skip).map((m, i) => (
+                      <div key={i} className="flex items-center gap-1.5 text-xs">
+                        <div
+                          className="w-4 h-4 rounded-sm border border-border"
+                          style={{ backgroundColor: m.originalColor }}
+                          title={`Original: ${m.originalColor}`}
+                        />
+                        <span className="text-muted-foreground">→</span>
+                        <div
+                          className="w-4 h-4 rounded-sm border border-border"
+                          style={{ backgroundColor: m.threadColor }}
+                          title={`${m.threadName} (${m.threadNumber})`}
+                        />
+                        <span className="text-muted-foreground">{m.threadName}</span>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
             {/* Stitch Info */}
             <Card className="border-0 shadow-soft">
