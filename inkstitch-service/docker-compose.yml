@@ -1,0 +1,20 @@
+services:
+  inkstitch_api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: inkstitch_api
+    restart: unless-stopped
+    ports:
+      - "5021:8000"
+    volumes:
+      - /mnt/user/appdata/inkstitch_api:/app/data
+      - /tmp/inkstitch:/tmp/inkstitch
+    environment:
+      - PYTHONUNBUFFERED=1
+      - APP_ENV=production
+      - APPWRITE_ENDPOINT=https://appwrite.friborg.uk/v1
+      - APPWRITE_PROJECT_ID=69656089001c9db36e43
+    networks:
+      default:
+        name: stitchnet
