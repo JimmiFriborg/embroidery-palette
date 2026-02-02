@@ -4,7 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Logo } from '@/components/Logo';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { databases, DATABASE_ID, COLLECTIONS, Query, type Project } from '@/lib/appwrite';
+import { databases, storage, DATABASE_ID, COLLECTIONS, STORAGE_BUCKETS, Query, type Project } from '@/lib/appwrite';
 import { 
   Plus, 
   FolderOpen, 
@@ -172,11 +172,16 @@ export default function Dashboard() {
                 >
                   <CardContent className="p-4 flex items-center gap-4">
                     <div className="w-14 h-14 rounded-lg bg-muted flex items-center justify-center flex-shrink-0 overflow-hidden">
-                      {project.previewImageId ? (
+                      {(project.processedImageId || project.originalImageId) ? (
                         <img 
-                          src={`/preview/${project.previewImageId}`} 
+                          src={storage.getFilePreview(
+                            STORAGE_BUCKETS.IMAGES,
+                            project.processedImageId || project.originalImageId!,
+                            56, 56
+                          ).toString()}
                           alt={project.name}
                           className="w-full h-full object-cover"
+                          crossOrigin="anonymous"
                         />
                       ) : (
                         <ImageIcon className="h-6 w-6 text-muted-foreground" />
