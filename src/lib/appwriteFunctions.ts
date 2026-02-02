@@ -1,5 +1,5 @@
 import { ID, Functions } from 'appwrite';
-import client from './appwrite';
+import client, { storage } from './appwrite';
 
 // Appwrite function endpoints (fallback for direct calls)
 const APPWRITE_ENDPOINT = import.meta.env.VITE_APPWRITE_ENDPOINT || 'https://cloud.appwrite.io/v1';
@@ -184,12 +184,12 @@ export async function generatePes(payload: GeneratePesPayload): Promise<Generate
  * Get the download URL for a PES file
  */
 export function getPesDownloadUrl(pesFileId: string): string {
-  return `${APPWRITE_ENDPOINT}/storage/buckets/pes_files/files/${pesFileId}/download?project=${APPWRITE_PROJECT_ID}`;
+  return storage.getFileDownload('pes_files', pesFileId).toString();
 }
 
 /**
  * Get preview URL for stitch simulation
  */
 export function getPreviewUrl(previewImageId: string): string {
-  return `${APPWRITE_ENDPOINT}/storage/buckets/stitch_previews/files/${previewImageId}/preview?project=${APPWRITE_PROJECT_ID}`;
+  return storage.getFilePreview('stitch_previews', previewImageId).toString();
 }

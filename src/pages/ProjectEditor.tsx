@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Logo } from '@/components/Logo';
 import { Button } from '@/components/ui/button';
@@ -26,13 +26,24 @@ import {
   Play,
   ExternalLink,
   Layers,
-  PenTool
+  PenTool,
+  Trash2,
+  MoreVertical,
+  RefreshCw
 } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 export default function ProjectEditor() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { toast } = useToast();
   
   const [project, setProject] = useState<Project | null>(null);
@@ -83,6 +94,25 @@ export default function ProjectEditor() {
       fetchProject();
     }
   }, [id]);
+
+  // Auto-process when coming from project creation
+  const [autoProcessTriggered, setAutoProcessTriggered] = useState(false);
+  useEffect(() => {
+    if (
+      searchParams.get('autoProcess') === 'true' &&
+      project?.originalImageId &&
+      !project?.processedImageId &&
+      !isProcessing &&
+      !autoProcessTriggered
+    ) {
+      setAutoProcessTriggered(true);
+      // Clear the URL param
+      searchParams.delete('autoProcess');
+      setSearchParams(searchParams, { replace: true });
+      // Trigger processing
+      handleProcessImage();
+    }
+  }, [project, searchParams, isProcessing, autoProcessTriggered]);
 
   // Fun processing messages
   const PROCESS_STEPS = [
@@ -142,9 +172,17 @@ export default function ProjectEditor() {
         }
       }
 
-      // Load color mappings
+      // Load color mappings (stored as JSON string in Appwrite)
       if (projectData.colorMappings) {
-        setColorMappings(projectData.colorMappings);
+        try {
+          const parsed = typeof projectData.colorMappings === 'string'
+            ? JSON.parse(projectData.colorMappings)
+            : projectData.colorMappings;
+          setColorMappings(parsed);
+        } catch (e) {
+          console.warn('Failed to parse colorMappings', e);
+          setColorMappings([]);
+        }
       } else {
         // Generate placeholder color mappings for demo
         const demoColors = generateDemoColors(projectData.threadCount);
@@ -250,6 +288,7 @@ export default function ProjectEditor() {
             };
           });
           setColorMappings(mappings);
+          saveColorMappings(mappings);
         }
 
         // Store region summary for better stitch estimates
@@ -282,6 +321,65 @@ export default function ProjectEditor() {
     }
   };
 
+  // Delete project and all associated files
+  const handleDeleteProject = async () => {
+    if (!project) return;
+    
+    const confirmed = window.confirm(`Delete "${project.name}"? This cannot be undone.`);
+    if (!confirmed) return;
+
+    try {
+      // Delete associated files (best effort)
+      const fileIds = [
+        project.originalImageId,
+        project.processedImageId,
+        project.outlineImageId,
+        project.pesFileId,
+        project.previewImageId,
+      ].filter(Boolean) as string[];
+
+      for (const fileId of fileIds) {
+        try {
+          // Try each bucket
+          for (const bucket of [STORAGE_BUCKETS.IMAGES, STORAGE_BUCKETS.PES_FILES, STORAGE_BUCKETS.PREVIEWS]) {
+            try {
+              await storage.deleteFile(bucket, fileId);
+              break;
+            } catch { /* wrong bucket, try next */ }
+          }
+        } catch { /* file already gone */ }
+      }
+
+      // Delete the project document
+      await databases.deleteDocument(DATABASE_ID, COLLECTIONS.PROJECTS, project.$id);
+
+      toast({ title: 'Project deleted' });
+      navigate('/dashboard');
+    } catch (error) {
+      console.error('Delete failed:', error);
+      toast({
+        title: 'Delete failed',
+        description: error instanceof Error ? error.message : 'Please try again.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  // Persist color mappings to Appwrite
+  const saveColorMappings = async (mappings: ColorMapping[]) => {
+    if (!project) return;
+    try {
+      await databases.updateDocument(
+        DATABASE_ID,
+        COLLECTIONS.PROJECTS,
+        project.$id,
+        { colorMappings: JSON.stringify(mappings) }
+      );
+    } catch (e) {
+      console.error('Failed to save color mappings:', e);
+    }
+  };
+
   const handleThreadSelect = (thread: BrotherThread) => {
     if (selectedColorIndex === null) return;
     
@@ -301,6 +399,7 @@ export default function ProjectEditor() {
       };
     }
     setColorMappings(updatedMappings);
+    saveColorMappings(updatedMappings);
     setSelectedColorIndex(null);
   };
 
@@ -419,9 +518,27 @@ export default function ProjectEditor() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon">
-              <Settings className="h-5 w-5" />
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon">
+                  <MoreVertical className="h-5 w-5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={handleProcessImage} disabled={isProcessing || !project?.originalImageId}>
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Re-process Image
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={handleDeleteProject}
+                  className="text-destructive focus:text-destructive"
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete Project
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       </header>

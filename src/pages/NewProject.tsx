@@ -150,8 +150,8 @@ export default function NewProject() {
         description: 'Your project is ready for editing',
       });
 
-      // Navigate to editor
-      navigate(`/project/${newProject.$id}`);
+      // Navigate to editor with auto-process flag
+      navigate(`/project/${newProject.$id}?autoProcess=true`);
     } catch (error) {
       console.error('Failed to create project:', error);
       const message = error instanceof Error ? error.message : 'Unknown error';

@@ -12,15 +12,32 @@ import {
   Search,
   Image as ImageIcon,
   Loader2,
-  FolderOpen
+  FolderOpen,
+  Trash2
 } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 
 export default function Projects() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+
+  const handleDeleteProject = async (e: React.MouseEvent, project: Project) => {
+    e.stopPropagation();
+    const confirmed = window.confirm(`Delete "${project.name}"?`);
+    if (!confirmed) return;
+
+    try {
+      await databases.deleteDocument(DATABASE_ID, COLLECTIONS.PROJECTS, project.$id);
+      setProjects(prev => prev.filter(p => p.$id !== project.$id));
+      toast({ title: 'Project deleted' });
+    } catch (error) {
+      toast({ title: 'Delete failed', variant: 'destructive' });
+    }
+  };
 
   useEffect(() => {
     fetchProjects();
@@ -134,9 +151,17 @@ export default function Projects() {
                       Updated {new Date(project.$updatedAt).toLocaleDateString()}
                     </p>
                   </div>
-                  <span className={`text-xs px-2 py-1 rounded-full ${getStatusColor(project.status)}`}>
-                    {project.status}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs px-2 py-1 rounded-full ${getStatusColor(project.status)}`}>
+                      {project.status}
+                    </span>
+                    <button
+                      onClick={(e) => handleDeleteProject(e, project)}
+                      className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
                 </CardContent>
               </Card>
             ))}
