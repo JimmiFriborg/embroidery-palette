@@ -41,7 +41,8 @@ RUN pip install --no-cache-dir \
     "uvicorn[standard]" \
     pillow \
     pyembroidery \
-    numpy
+    numpy \
+    python-multipart
 
 COPY ./app /app/app
 
