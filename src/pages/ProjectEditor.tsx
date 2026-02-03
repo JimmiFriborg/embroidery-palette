@@ -183,6 +183,27 @@ export default function ProjectEditor() {
           console.warn('Failed to parse colorMappings', e);
           setColorMappings([]);
         }
+      } else if (projectData.extractedColors) {
+        // Convert extractedColors (from process-image) to colorMappings format
+        try {
+          const extracted = typeof projectData.extractedColors === 'string'
+            ? JSON.parse(projectData.extractedColors)
+            : projectData.extractedColors;
+          const mappings = extracted.map((color: string) => {
+            const match = findClosestThread(color);
+            return {
+              originalColor: color,
+              brotherThread: match,
+              skip: false,
+            };
+          });
+          setColorMappings(mappings);
+          console.log('Loaded colors from extractedColors:', mappings);
+        } catch (e) {
+          console.warn('Failed to parse extractedColors', e);
+          const demoColors = generateDemoColors(projectData.threadCount);
+          setColorMappings(demoColors);
+        }
       } else {
         // Generate placeholder color mappings for demo
         const demoColors = generateDemoColors(projectData.threadCount);
