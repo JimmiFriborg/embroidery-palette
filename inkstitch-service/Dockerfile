@@ -12,7 +12,7 @@ RUN apt-get update && \
         git \
         libcairo2 \
         libpango-1.0-0 \
-        libgdk-pixbuf2.0-0 \
+        libgdk-pixbuf-2.0-0 \
         build-essential \
         pkg-config && \
     rm -rf /var/lib/apt/lists/*

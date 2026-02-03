@@ -15,6 +15,6 @@ services:
       - APP_ENV=production
       - APPWRITE_ENDPOINT=https://appwrite.friborg.uk/v1
       - APPWRITE_PROJECT_ID=69656089001c9db36e43
-    networks:
-      default:
-        name: stitchnet
+networks:
+   default:
+      name: stitchnet
