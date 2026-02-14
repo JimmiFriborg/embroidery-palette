@@ -59,7 +59,7 @@ export default function ProjectEditor() {
   const [selectedColorIndex, setSelectedColorIndex] = useState<number | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
-  const [regionSummary, setRegionSummary] = useState<{ total_area_mm2?: number; total_regions?: number } | null>(null);
+  const [regionSummary, setRegionSummary] = useState<{ total_regions?: number } | null>(null);
   const [processingStep, setProcessingStep] = useState(0);
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [lastStitchStats, setLastStitchStats] = useState<StitchStats | null>(null);
@@ -210,20 +210,7 @@ export default function ProjectEditor() {
         setColorMappings(demoColors);
       }
 
-      // Load region summary from stored metadata if available
-      if (projectData.regionMetadata) {
-        try {
-          const meta = JSON.parse(projectData.regionMetadata);
-          if (meta?.summary) {
-            setRegionSummary({
-              total_area_mm2: meta.summary.total_area_mm2,
-              total_regions: meta.summary.total_regions,
-            });
-          }
-        } catch (e) {
-          console.warn('Failed to parse regionMetadata', e);
-        }
-      }
+      // Region metadata loaded from processImage response only (not stored on project)
     } catch (error) {
       console.error('Failed to fetch project:', error);
       toast({
@@ -315,7 +302,6 @@ export default function ProjectEditor() {
         // Store region summary for better stitch estimates
         if (result.regionData?.summary) {
           setRegionSummary({
-            total_area_mm2: result.regionData.summary.total_area_mm2,
             total_regions: result.regionData.summary.total_regions,
           });
         }
@@ -891,7 +877,6 @@ export default function ProjectEditor() {
         colorCount={colorMappings.length}
         isExporting={isExporting}
         stats={lastStitchStats}
-        regionAreaMm2={regionSummary?.total_area_mm2}
         regionCount={regionSummary?.total_regions}
       />
     </div>

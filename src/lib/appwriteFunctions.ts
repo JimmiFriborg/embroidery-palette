@@ -82,7 +82,7 @@ async function executeFunction<T>(functionId: string, data: object): Promise<T> 
     JSON.stringify(data),  // body
     false,                 // async
     '/',                   // path
-    'POST',               // method
+    'POST' as any,         // method
     { 'Content-Type': 'application/json' }  // headers
   );
 
@@ -110,7 +110,7 @@ async function executeFunctionAndWait<T>(
     JSON.stringify(data),
     true,   // async
     '/',
-    'POST',
+    'POST' as any,
     { 'Content-Type': 'application/json' }
   );
 

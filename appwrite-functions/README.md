@@ -11,9 +11,10 @@ Processes uploaded images for embroidery conversion:
 - Resizing for hoop dimensions
 
 ### 2. `generate-pes`
-Generates Brother PES embroidery files:
-- Converts processed images to stitch patterns
-- Uses pyembroidery library for PES format
+Generates Brother PES embroidery files via the InkStitch microservice:
+- Sends processed image to InkStitch (image → SVG → PES)
+- Leverages Ink/Stitch for proper underlay, satin columns, and pull compensation
+- Uses pyembroidery for preview rendering
 - Generates stitch preview images
 
 ---
