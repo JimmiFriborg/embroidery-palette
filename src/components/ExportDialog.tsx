@@ -42,7 +42,6 @@ interface ExportDialogProps {
   colorCount: number;
   isExporting: boolean;
   stats?: StitchStats | null;
-  regionAreaMm2?: number;
   regionCount?: number;
 }
 
@@ -78,7 +77,6 @@ export function ExportDialog({
   colorCount,
   isExporting,
   stats,
-  regionAreaMm2,
   regionCount,
 }: ExportDialogProps) {
   const [selectedPreset, setSelectedPreset] = useState<QualityPreset>('balanced');
@@ -92,8 +90,7 @@ export function ExportDialog({
   // Estimate stitch count based on detected region area (fallback to hoop safe area)
   const estimateStitches = () => {
     const hoopArea = hoopSize === '100x100' ? 90 * 90 : 62 * 62; // Safe area in mm²
-    const area = regionAreaMm2 && regionAreaMm2 > 0 ? regionAreaMm2 : hoopArea;
-    const baseStitches = area * currentDensity * 0.4; // Rough estimate
+    const baseStitches = hoopArea * currentDensity * 0.4; // Rough estimate
     return Math.round(baseStitches);
   };
 
